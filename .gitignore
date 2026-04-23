@@ -15,6 +15,16 @@ target/
 src-tauri/target/
 src-tauri/gen/schemas/
 
+# Release artifacts and signing secrets
+*.app/
+*.dmg
+*.tar.gz
+*.sig
+*.key
+*.pem
+*.p12
+latest.json
+
 # Environment files
 .env
 .env.*

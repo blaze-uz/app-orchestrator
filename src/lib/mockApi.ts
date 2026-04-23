@@ -134,6 +134,7 @@ function activity(type: ActivityEvent["type"], message: string, level: ActivityE
 
 class MockApi {
   private config: AppConfig = {
+    schemaVersion: 1,
     workspaces: [defaultWorkspace],
     projects: [demoProject],
     processes: demoProcesses,

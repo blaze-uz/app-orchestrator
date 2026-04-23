@@ -1,0 +1,59 @@
+name: Release Desktop App
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish-macos:
+    name: Publish macOS ${{ matrix.target }}
+    runs-on: macos-latest
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      LC_CTYPE: en_US.UTF-8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+          - target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and upload Tauri bundles
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Local Project Orchestrator v__VERSION__
+          releaseBody: "macOS desktop release with signed updater artifacts."
+          releaseDraft: false
+          prerelease: false
+          tauriScript: npm run tauri
+          args: ${{ matrix.args }}
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true

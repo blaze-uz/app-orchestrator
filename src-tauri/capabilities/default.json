@@ -3,5 +3,12 @@
   "identifier": "default",
   "description": "Default permissions for the main orchestration window",
   "windows": ["main"],
-  "permissions": ["core:default", "shell:default", "dialog:default", "dialog:allow-confirm"]
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "dialog:default",
+    "dialog:allow-confirm",
+    "updater:default",
+    "process:allow-restart"
+  ]
 }

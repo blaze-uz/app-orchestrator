@@ -17,7 +17,9 @@ pub fn run() {
     let shutdown_started = Arc::new(AtomicBool::new(false));
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let config = storage::load_config(app.handle());
             let runtime_processes = storage::load_runtime_processes(app.handle(), &config);

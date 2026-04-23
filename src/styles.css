@@ -2760,6 +2760,25 @@ button.danger-button:hover {
   padding: 5px 8px;
 }
 
+.solo-settings-version {
+  min-height: 24px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text);
+  background: var(--surface-2);
+  padding: 0 9px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.solo-settings-progress {
+  width: 180px;
+  height: 8px;
+  accent-color: var(--accent-strong);
+}
+
 .solo-settings-actions {
   display: flex;
   align-items: center;
@@ -2785,6 +2804,16 @@ button.danger-button:hover {
   border-radius: 7px;
   background: var(--danger-soft);
   color: var(--bad);
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.solo-settings-note {
+  margin: -22px 0 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-soft);
   padding: 9px 10px;
   font-size: 12px;
 }

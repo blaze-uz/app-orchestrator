@@ -1,6 +1,13 @@
-use crate::models::{ActivityEvent, ActivityType, ApiError, AppConfig, Id, RuntimeProcessRecord};
+use crate::models::{
+    ActivityEvent, ActivityType, ApiError, AppConfig, Id, RuntimeProcessRecord,
+    CURRENT_CONFIG_SCHEMA_VERSION,
+};
 use chrono::Utc;
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
@@ -33,10 +40,30 @@ pub fn load_config(app: &AppHandle) -> AppConfig {
         let _ = save_config_to_path(&path, &config);
         return config;
     }
-    fs::read_to_string(&path)
+    let Ok(content) = fs::read_to_string(&path) else {
+        return AppConfig::default();
+    };
+    let source_schema_version = serde_json::from_str::<serde_json::Value>(&content)
         .ok()
-        .and_then(|content| serde_json::from_str::<AppConfig>(&content).ok())
-        .unwrap_or_default()
+        .and_then(|value| {
+            value
+                .get("schemaVersion")
+                .and_then(|schema| schema.as_u64())
+        })
+        .unwrap_or(0);
+
+    let Ok(mut config) = serde_json::from_str::<AppConfig>(&content) else {
+        return AppConfig::default();
+    };
+
+    if source_schema_version < CURRENT_CONFIG_SCHEMA_VERSION as u64 {
+        config = migrate_config(config);
+        if backup_config_before_migration(&path, &content).is_ok() {
+            let _ = save_config_to_path(&path, &config);
+        }
+    }
+
+    config
 }
 
 pub fn save_config(app: &AppHandle, config: &AppConfig) -> Result<(), ApiError> {
@@ -175,7 +202,33 @@ fn normalize_runtime_records(
         .collect()
 }
 
-fn save_config_to_path(path: &PathBuf, config: &AppConfig) -> Result<(), ApiError> {
+pub fn migrate_config(mut config: AppConfig) -> AppConfig {
+    config.schema_version = CURRENT_CONFIG_SCHEMA_VERSION;
+    config
+}
+
+fn backup_config_before_migration(path: &Path, content: &str) -> Result<(), ApiError> {
+    let backup_path = migration_backup_path(path);
+    fs::write(backup_path, content).map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_BACKUP_FAILED",
+            "Unable to create config backup before migration",
+            error,
+            true,
+        )
+    })
+}
+
+fn migration_backup_path(path: &Path) -> PathBuf {
+    let timestamp = Utc::now().format("%Y%m%d%H%M%S");
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config.json");
+    path.with_file_name(format!("{filename}.backup-{timestamp}.json"))
+}
+
+fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), ApiError> {
     let content = serde_json::to_string_pretty(config).map_err(|error| {
         ApiError::with_details(
             "CONFIG_SERIALIZATION_FAILED",
@@ -184,8 +237,18 @@ fn save_config_to_path(path: &PathBuf, config: &AppConfig) -> Result<(), ApiErro
             false,
         )
     })?;
-    fs::write(path, content).map_err(|error| {
+    let temp_path = path.with_extension("json.tmp");
+    fs::write(&temp_path, format!("{content}\n")).map_err(|error| {
         ApiError::with_details("CONFIG_WRITE_FAILED", "Unable to write config", error, true)
+    })?;
+    fs::rename(&temp_path, path).map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        ApiError::with_details(
+            "CONFIG_WRITE_FAILED",
+            "Unable to commit config update",
+            error,
+            true,
+        )
     })
 }
 

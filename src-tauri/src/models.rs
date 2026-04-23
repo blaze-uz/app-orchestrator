@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub type Id = String;
+pub const CURRENT_CONFIG_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -363,6 +364,8 @@ pub struct ActivityEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
+    #[serde(default = "default_config_schema_version")]
+    pub schema_version: u32,
     pub workspaces: Vec<Workspace>,
     pub projects: Vec<Project>,
     pub processes: Vec<ProcessDefinition>,
@@ -370,6 +373,10 @@ pub struct AppConfig {
     pub last_selected_project_id: Option<Id>,
     pub last_selected_process_id: Option<Id>,
     pub activity: Vec<ActivityEvent>,
+}
+
+pub fn default_config_schema_version() -> u32 {
+    CURRENT_CONFIG_SCHEMA_VERSION
 }
 
 impl Default for AppConfig {
@@ -385,6 +392,7 @@ impl Default for AppConfig {
         };
 
         Self {
+            schema_version: CURRENT_CONFIG_SCHEMA_VERSION,
             workspaces: vec![workspace],
             projects: vec![],
             processes: vec![],

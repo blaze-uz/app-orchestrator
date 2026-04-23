@@ -186,6 +186,7 @@ export interface DashboardSummary {
 }
 
 export interface AppConfig {
+  schemaVersion: number;
   workspaces: Workspace[];
   projects: Project[];
   processes: ProcessDefinition[];

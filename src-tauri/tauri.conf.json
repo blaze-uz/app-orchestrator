@@ -27,6 +27,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"]
+    "targets": ["app", "dmg"],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg3MjNEM0FFRENFRDA3OEMKUldTTUIrM2NydE1qaDcrbzRGRnZjYzh2WDZTemdoQk5ITkl4cit4RnpPZU5YaXdCdEU0TldZVnkK",
+      "endpoints": [
+        "https://github.com/blaze-uz/app-orchestrator/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

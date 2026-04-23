@@ -9,12 +9,18 @@
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "PATH=\"$HOME/.cargo/bin:$PATH\" tauri",
     "tauri:dev": "PATH=\"$HOME/.cargo/bin:$PATH\" tauri dev",
-    "tauri:build": "PATH=\"$HOME/.cargo/bin:$PATH\" tauri build"
+    "tauri:build": "node scripts/tauri-build.mjs",
+    "desktop:build": "node scripts/tauri-build.mjs",
+    "desktop:install": "node scripts/desktop-install.mjs",
+    "desktop:open": "node scripts/desktop-open.mjs",
+    "version:set": "node scripts/set-version.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.12",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.7.0",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",
     "react": "^19.2.0",

@@ -620,6 +620,7 @@ pub async fn update_settings(app: AppHandle, settings: AppSettings) -> ApiRespon
 #[tauri::command]
 pub async fn import_config(app: AppHandle, config: AppConfig) -> ApiResponse<AppConfig> {
     let state = app_state();
+    let config = storage::migrate_config(config);
     {
         let mut guard = state.config.write().await;
         *guard = config.clone();
