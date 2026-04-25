@@ -35,6 +35,10 @@ pub fn run() {
                 app.handle().clone(),
                 state::app_state(),
             ));
+            tauri::async_runtime::block_on(process_manager::sync_external_processes(
+                app.handle().clone(),
+                state::app_state(),
+            ));
             tauri::async_runtime::block_on(process_manager::start_marked_projects_on_launch(
                 app.handle().clone(),
                 state::app_state(),

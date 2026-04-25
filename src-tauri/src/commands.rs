@@ -245,8 +245,12 @@ pub async fn delete_project(app: AppHandle, project_id: Id) -> ApiResponse<bool>
 }
 
 #[tauri::command]
-pub async fn get_project_detail(project_id: Id) -> ApiResponse<crate::models::ProjectDetail> {
+pub async fn get_project_detail(
+    app: AppHandle,
+    project_id: Id,
+) -> ApiResponse<crate::models::ProjectDetail> {
     let state = app_state();
+    process_manager::sync_external_processes(app, state.clone()).await;
     match process_manager::get_project_detail(&state, &project_id).await {
         Ok(detail) => ApiResponse::ok(detail),
         Err(error) => ApiResponse::err(error),
@@ -495,8 +499,12 @@ pub async fn get_runtime_state(process_id: Id) -> ApiResponse<crate::models::Pro
 }
 
 #[tauri::command]
-pub async fn get_all_runtime_states() -> ApiResponse<Vec<crate::models::ProcessRuntimeState>> {
-    process_manager::get_all_runtime_states(app_state()).await
+pub async fn get_all_runtime_states(
+    app: AppHandle,
+) -> ApiResponse<Vec<crate::models::ProcessRuntimeState>> {
+    let state = app_state();
+    process_manager::sync_external_processes(app, state.clone()).await;
+    process_manager::get_all_runtime_states(state).await
 }
 
 #[tauri::command]
@@ -542,8 +550,10 @@ pub async fn get_health_summary(
 }
 
 #[tauri::command]
-pub async fn get_dashboard_summary() -> ApiResponse<DashboardSummary> {
-    ApiResponse::ok(process_manager::dashboard_summary(app_state()).await)
+pub async fn get_dashboard_summary(app: AppHandle) -> ApiResponse<DashboardSummary> {
+    let state = app_state();
+    process_manager::sync_external_processes(app, state.clone()).await;
+    ApiResponse::ok(process_manager::dashboard_summary(state).await)
 }
 
 #[tauri::command]

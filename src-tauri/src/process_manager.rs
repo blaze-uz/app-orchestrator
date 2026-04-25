@@ -18,7 +18,7 @@ use nix::{
 use std::{
     collections::{HashMap, HashSet},
     io::{Error, ErrorKind},
-    path::Path,
+    path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
 };
@@ -81,6 +81,7 @@ pub async fn start_process(
     state: AppState,
     process_id: Id,
 ) -> ApiResponse<ProcessRuntimeState> {
+    sync_external_processes(app.clone(), state.clone()).await;
     match start_process_inner(app, state, process_id).await {
         Ok(runtime) => ApiResponse::ok(runtime),
         Err(error) => ApiResponse::err(error),
@@ -707,6 +708,122 @@ pub async fn recover_tracked_processes(app: AppHandle, state: AppState) {
     let _ = persist_runtime_processes(&app, &state).await;
 }
 
+pub async fn sync_external_processes(app: AppHandle, state: AppState) {
+    let mut tracked_groups: HashSet<u32> = state
+        .runtime
+        .process_records
+        .read()
+        .await
+        .values()
+        .map(normalized_process_group_id)
+        .collect();
+    let processes = {
+        let config = state.config.read().await;
+        config
+            .processes
+            .iter()
+            .filter_map(|process| {
+                let project = config
+                    .projects
+                    .iter()
+                    .find(|project| project.id == process.project_id)?;
+                let cwd = resolve_working_directory(project, process).ok()?;
+                let command_tokens = process_command_tokens(process).ok()?;
+                Some((project.clone(), process.clone(), cwd, command_tokens))
+            })
+            .collect::<Vec<_>>()
+    };
+    if processes.is_empty() {
+        return;
+    }
+
+    let rows = list_live_processes().await;
+    if rows.is_empty() {
+        return;
+    }
+
+    let mut adopted = false;
+    for (project, process, configured_cwd, command_tokens) in processes {
+        let already_active = state
+            .runtime
+            .states
+            .read()
+            .await
+            .get(&process.id)
+            .map(|runtime| {
+                matches!(
+                    runtime.current_status,
+                    ProcessStatus::Running
+                        | ProcessStatus::Starting
+                        | ProcessStatus::Queued
+                        | ProcessStatus::Stopping
+                )
+            })
+            .unwrap_or(false);
+        if already_active {
+            continue;
+        }
+
+        let Some(row) =
+            find_external_process_match(&rows, &tracked_groups, &configured_cwd, &command_tokens)
+                .await
+        else {
+            continue;
+        };
+
+        let record = RuntimeProcessRecord {
+            process_id: process.id.clone(),
+            project_id: project.id.clone(),
+            pid: row.pid,
+            process_group_id: row.process_group_id,
+            started_at: Utc::now(),
+            command: display_command(&command_tokens),
+        };
+        track_runtime_process(&state, record.clone()).await;
+        tracked_groups.insert(row.process_group_id);
+
+        let mut runtime = state
+            .runtime
+            .states
+            .read()
+            .await
+            .get(&process.id)
+            .cloned()
+            .unwrap_or_else(|| ProcessRuntimeState::stopped(process.id.clone()));
+        runtime.pid = Some(row.pid);
+        runtime.started_at = Some(record.started_at);
+        runtime.stopped_at = None;
+        runtime.exit_code = None;
+        runtime.last_error = None;
+        runtime.memory_usage = None;
+        runtime.health_status = Some(HealthStatus::Unknown);
+        runtime.port_bindings = detect_process_ports(&process);
+        runtime.current_status = ProcessStatus::Running;
+        set_runtime(&app, &state, runtime, "process_started").await;
+        append_log(
+            &app,
+            &state,
+            &process,
+            StreamType::System,
+            LogLevel::Info,
+            format!("Adopted running process group {}", row.process_group_id),
+        )
+        .await;
+        spawn_memory_monitor(
+            app.clone(),
+            state.clone(),
+            process.project_id.clone(),
+            process.id.clone(),
+            row.pid,
+        );
+        adopted = true;
+    }
+
+    if adopted {
+        let _ = persist_runtime_processes(&app, &state).await;
+    }
+}
+
 pub async fn shutdown_tracked_processes(app: AppHandle, state: AppState) {
     let stop_timeout_ms = state.config.read().await.settings.stop_timeout_ms;
     let records = state.runtime.process_records.read().await.clone();
@@ -949,6 +1066,149 @@ fn process_group_exists(process_group_id: u32) -> bool {
         Err(Errno::ESRCH) => false,
         Err(_) => true,
     }
+}
+
+#[derive(Clone, Debug)]
+struct ExternalProcessRow {
+    pid: u32,
+    process_group_id: u32,
+    stat: String,
+    command: String,
+}
+
+async fn list_live_processes() -> Vec<ExternalProcessRow> {
+    let output = Command::new("ps")
+        .arg("-ax")
+        .arg("-o")
+        .arg("pid=")
+        .arg("-o")
+        .arg("pgid=")
+        .arg("-o")
+        .arg("stat=")
+        .arg("-o")
+        .arg("command=")
+        .stderr(Stdio::null())
+        .output()
+        .await;
+    let Ok(output) = output else {
+        return vec![];
+    };
+    if !output.status.success() {
+        return vec![];
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(parse_external_process_row)
+        .filter(|row| is_live_process_stat(&row.stat))
+        .collect()
+}
+
+async fn find_external_process_match(
+    rows: &[ExternalProcessRow],
+    tracked_groups: &HashSet<u32>,
+    configured_cwd: &str,
+    command_tokens: &[String],
+) -> Option<ExternalProcessRow> {
+    for row in rows {
+        if tracked_groups.contains(&row.process_group_id) {
+            continue;
+        }
+        if !command_tokens_match(command_tokens, &row.command) {
+            continue;
+        }
+        let Some(cwd) = process_cwd(row.pid).await else {
+            continue;
+        };
+        if cwd_matches_root(&cwd, configured_cwd) {
+            return Some(row.clone());
+        }
+    }
+    None
+}
+
+fn parse_external_process_row(line: &str) -> Option<ExternalProcessRow> {
+    let (pid, remainder) = take_process_token(line.trim_start())?;
+    let (process_group_id, remainder) = take_process_token(remainder)?;
+    let (stat, command) = take_process_token(remainder)?;
+    Some(ExternalProcessRow {
+        pid: pid.parse().ok()?,
+        process_group_id: process_group_id.parse().ok()?,
+        stat: stat.to_string(),
+        command: command.trim_start().to_string(),
+    })
+}
+
+fn take_process_token(input: &str) -> Option<(&str, &str)> {
+    let input = input.trim_start();
+    if input.is_empty() {
+        return None;
+    }
+    let end = input.find(char::is_whitespace).unwrap_or(input.len());
+    Some((&input[..end], &input[end..]))
+}
+
+async fn process_cwd(pid: u32) -> Option<String> {
+    let output = Command::new("lsof")
+        .arg("-a")
+        .arg("-p")
+        .arg(pid.to_string())
+        .arg("-d")
+        .arg("cwd")
+        .arg("-Fn")
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix('n').map(|value| value.to_string()))
+}
+
+fn cwd_matches_root(candidate_cwd: &str, configured_cwd: &str) -> bool {
+    let candidate = canonical_or_original(candidate_cwd);
+    let configured = canonical_or_original(configured_cwd);
+    candidate.starts_with(configured)
+}
+
+fn canonical_or_original(path: &str) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path))
+}
+
+fn command_tokens_match(configured_tokens: &[String], candidate_command: &str) -> bool {
+    if configured_tokens.is_empty() {
+        return false;
+    }
+    let Ok(candidate_tokens) = split_command_words(candidate_command) else {
+        return false;
+    };
+    if candidate_tokens.len() < configured_tokens.len() {
+        return false;
+    }
+    configured_tokens
+        .iter()
+        .zip(candidate_tokens.iter())
+        .enumerate()
+        .all(|(index, (configured, candidate))| {
+            let configured = normalize_command_dashes(configured);
+            let candidate = normalize_command_dashes(candidate);
+            if index == 0 {
+                command_name_matches(&configured, &candidate)
+            } else {
+                configured == candidate
+            }
+        })
+}
+
+fn command_name_matches(configured: &str, candidate: &str) -> bool {
+    configured == candidate
+        || Path::new(candidate)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name == configured)
+            .unwrap_or(false)
 }
 
 async fn live_pid_for_record(record: &RuntimeProcessRecord) -> Option<u32> {
@@ -2358,5 +2618,70 @@ async fn maybe_log_restart_policy(
             "Restart policy is configured; manual restart is available in MVP runtime",
         )
         .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tokens(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn command_match_accepts_exact_command() {
+        assert!(command_tokens_match(
+            &tokens(&["npm", "run", "dev"]),
+            "npm run dev"
+        ));
+    }
+
+    #[test]
+    fn command_match_accepts_configured_prefix_with_executable_path() {
+        assert!(command_tokens_match(
+            &tokens(&["npm", "run", "dev"]),
+            "/opt/homebrew/bin/npm run dev -- --host 127.0.0.1"
+        ));
+    }
+
+    #[test]
+    fn command_match_rejects_different_command() {
+        assert!(!command_tokens_match(
+            &tokens(&["npm", "run", "dev"]),
+            "npm run preview"
+        ));
+    }
+
+    #[test]
+    fn command_match_normalizes_dash_variants() {
+        assert!(command_tokens_match(
+            &tokens(&["vite", "--host"]),
+            "vite —host 127.0.0.1"
+        ));
+    }
+
+    #[test]
+    fn cwd_match_accepts_exact_directory() {
+        assert!(cwd_matches_root(
+            "/tmp/app-orchestrator/project",
+            "/tmp/app-orchestrator/project"
+        ));
+    }
+
+    #[test]
+    fn cwd_match_accepts_child_directory() {
+        assert!(cwd_matches_root(
+            "/tmp/app-orchestrator/project/packages/api",
+            "/tmp/app-orchestrator/project"
+        ));
+    }
+
+    #[test]
+    fn cwd_match_rejects_sibling_directory() {
+        assert!(!cwd_matches_root(
+            "/tmp/app-orchestrator/project-api",
+            "/tmp/app-orchestrator/project"
+        ));
     }
 }
