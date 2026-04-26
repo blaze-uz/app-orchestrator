@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 #[derive(Clone)]
 pub struct RuntimeRegistry {
@@ -13,10 +13,15 @@ pub struct RuntimeRegistry {
     pub pids: Arc<RwLock<HashMap<Id, u32>>>,
     pub process_records: Arc<RwLock<HashMap<Id, RuntimeProcessRecord>>>,
     pub stopping_processes: Arc<RwLock<HashSet<Id>>>,
+    pub log_history_io: Arc<Mutex<()>>,
 }
 
 impl RuntimeRegistry {
-    pub fn new(config: &AppConfig, process_records: HashMap<Id, RuntimeProcessRecord>) -> Self {
+    pub fn new(
+        config: &AppConfig,
+        process_records: HashMap<Id, RuntimeProcessRecord>,
+        logs: Vec<LogEntry>,
+    ) -> Self {
         let states = config
             .processes
             .iter()
@@ -33,10 +38,11 @@ impl RuntimeRegistry {
             .collect();
         Self {
             states: Arc::new(RwLock::new(states)),
-            logs: Arc::new(RwLock::new(vec![])),
+            logs: Arc::new(RwLock::new(logs)),
             pids: Arc::new(RwLock::new(pids)),
             process_records: Arc::new(RwLock::new(process_records)),
             stopping_processes: Arc::new(RwLock::new(HashSet::new())),
+            log_history_io: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -48,8 +54,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: AppConfig, process_records: HashMap<Id, RuntimeProcessRecord>) -> Self {
-        let runtime = RuntimeRegistry::new(&config, process_records);
+    pub fn new(
+        config: AppConfig,
+        process_records: HashMap<Id, RuntimeProcessRecord>,
+        logs: Vec<LogEntry>,
+    ) -> Self {
+        let runtime = RuntimeRegistry::new(&config, process_records, logs);
         Self {
             config: Arc::new(RwLock::new(config)),
             runtime,

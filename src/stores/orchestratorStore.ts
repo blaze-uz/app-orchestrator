@@ -86,6 +86,11 @@ const defaultLogFilters: LogFilters = {
   liveTail: true,
   paused: false
 };
+const LOG_HISTORY_WINDOW_MS = 5 * 60 * 1000;
+
+function recentLogHistorySince() {
+  return new Date(Date.now() - LOG_HISTORY_WINDOW_MS).toISOString();
+}
 
 function mergeRuntime(states: ProcessRuntimeState[]) {
   return states.reduce<Record<ID, ProcessRuntimeState>>((acc, state) => {
@@ -154,7 +159,7 @@ export const useOrchestratorStore = create<OrchestratorState>((set, get) => ({
         api.listWorkspaces().then(unwrap),
         api.listProjects().then(unwrap),
         api.getAllRuntimeStates().then(unwrap),
-        api.getLogHistory({ limit: 1000 }).then(unwrap),
+        api.getLogHistory({ limit: 1000, since: recentLogHistorySince() }).then(unwrap),
         api.getDashboardSummary().then(unwrap)
       ]);
       const selectedProjectId = config.lastSelectedProjectId ?? projects[0]?.id;

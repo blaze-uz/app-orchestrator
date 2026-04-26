@@ -255,7 +255,7 @@ export function ProjectDetailView() {
             </div>
           </SoloSection>
 
-          <SoloSection title="Settings">
+          <SoloSection title="Settings" variant="settings">
             <div className="solo-detail-card">
               <SoloDetailRow
                 title="Auto Start"
@@ -300,7 +300,7 @@ export function ProjectDetailView() {
             </div>
           </SoloSection>
 
-          <SoloSection title="Notifications">
+          <SoloSection title="Notifications" variant="settings">
             <div className="solo-detail-card">
               <SoloDetailRow
                 title="Crash & exit alerts"
@@ -427,9 +427,9 @@ export function ProjectDetailView() {
   );
 }
 
-function SoloSection({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+function SoloSection({ title, action, children, variant = "default" }: { title: string; action?: ReactNode; children: ReactNode; variant?: "default" | "settings" }) {
   return (
-    <section className="solo-detail-section">
+    <section className={variant === "settings" ? "solo-detail-section settings-like" : "solo-detail-section"}>
       <div className="solo-detail-section-heading">
         <span>{title}</span>
         {action}

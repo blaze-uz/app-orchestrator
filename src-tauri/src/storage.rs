@@ -1,11 +1,12 @@
 use crate::models::{
-    ActivityEvent, ActivityType, ApiError, AppConfig, Id, RuntimeProcessRecord,
+    ActivityEvent, ActivityType, ApiError, AppConfig, Id, LogEntry, RuntimeProcessRecord,
     CURRENT_CONFIG_SCHEMA_VERSION,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::{
     collections::HashMap,
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
 };
 use tauri::{AppHandle, Manager};
@@ -90,6 +91,155 @@ pub fn runtime_pids_path(app: &AppHandle) -> Result<PathBuf, ApiError> {
         )
     })?;
     Ok(dir.join("runtime-pids.json"))
+}
+
+pub fn log_history_path(app: &AppHandle) -> Result<PathBuf, ApiError> {
+    let dir = app.path().app_config_dir().map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_PATH_UNAVAILABLE",
+            "Unable to resolve app config directory",
+            error,
+            false,
+        )
+    })?;
+    fs::create_dir_all(&dir).map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_PATH_UNAVAILABLE",
+            "Unable to create app config directory",
+            error,
+            false,
+        )
+    })?;
+    Ok(dir.join("log-history.jsonl"))
+}
+
+pub fn load_recent_logs(app: &AppHandle, since: DateTime<Utc>) -> Vec<LogEntry> {
+    let Ok(path) = log_history_path(app) else {
+        return vec![];
+    };
+    let Ok(content) = fs::read_to_string(path) else {
+        return vec![];
+    };
+    content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<LogEntry>(line).ok())
+        .filter(|entry| entry.timestamp >= since)
+        .collect()
+}
+
+pub fn append_log_entry(app: &AppHandle, entry: &LogEntry) -> Result<(), ApiError> {
+    let path = log_history_path(app)?;
+    let line = serde_json::to_string(entry).map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_SERIALIZATION_FAILED",
+            "Unable to serialize log entry",
+            error,
+            false,
+        )
+    })?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|error| {
+            ApiError::with_details(
+                "CONFIG_WRITE_FAILED",
+                "Unable to open log history",
+                error,
+                true,
+            )
+        })?;
+    writeln!(file, "{line}").map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_WRITE_FAILED",
+            "Unable to append log history",
+            error,
+            true,
+        )
+    })
+}
+
+pub fn prune_log_history(app: &AppHandle, since: DateTime<Utc>) -> Result<(), ApiError> {
+    rewrite_log_history(app, |entry| entry.timestamp >= since)
+}
+
+pub fn clear_log_history(app: &AppHandle, project_id: Option<&str>) -> Result<(), ApiError> {
+    rewrite_log_history(app, |entry| {
+        project_id
+            .map(|project_id| entry.project_id != project_id)
+            .unwrap_or(false)
+    })
+}
+
+fn rewrite_log_history(
+    app: &AppHandle,
+    retain: impl Fn(&LogEntry) -> bool,
+) -> Result<(), ApiError> {
+    let path = log_history_path(app)?;
+    if !path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&path).map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_READ_FAILED",
+            "Unable to read log history",
+            error,
+            true,
+        )
+    })?;
+    let retained = content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<LogEntry>(line).ok())
+        .filter(|entry| retain(entry))
+        .collect::<Vec<_>>();
+    if retained.is_empty() {
+        fs::remove_file(&path).map_err(|error| {
+            ApiError::with_details(
+                "CONFIG_WRITE_FAILED",
+                "Unable to clear log history",
+                error,
+                true,
+            )
+        })?;
+        return Ok(());
+    }
+
+    let temp_path = path.with_extension("jsonl.tmp");
+    let mut file = fs::File::create(&temp_path).map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_WRITE_FAILED",
+            "Unable to rewrite log history",
+            error,
+            true,
+        )
+    })?;
+    for entry in retained {
+        let line = serde_json::to_string(&entry).map_err(|error| {
+            ApiError::with_details(
+                "CONFIG_SERIALIZATION_FAILED",
+                "Unable to serialize log entry",
+                error,
+                false,
+            )
+        })?;
+        writeln!(file, "{line}").map_err(|error| {
+            ApiError::with_details(
+                "CONFIG_WRITE_FAILED",
+                "Unable to rewrite log history",
+                error,
+                true,
+            )
+        })?;
+    }
+    fs::rename(&temp_path, &path).map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        ApiError::with_details(
+            "CONFIG_WRITE_FAILED",
+            "Unable to commit log history rewrite",
+            error,
+            true,
+        )
+    })
 }
 
 pub fn load_runtime_processes(

@@ -1,23 +1,13 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import { Download, FolderOpen, RefreshCw, RotateCcw, Upload } from "lucide-react";
+import { Download, FolderOpen, RotateCcw, Upload } from "lucide-react";
 import { getLaunchOnLoginEnabled, setLaunchOnLoginEnabled } from "../../lib/autostart";
 import { selectFolder } from "../../lib/folderPicker";
 import { ensureNotificationPermission } from "../../lib/notifications";
-import {
-  canUseAppUpdater,
-  checkForAppUpdate,
-  confirmUpdateInstall,
-  getCurrentAppVersion,
-  installAppUpdate,
-  type Update,
-  type UpdateProgress
-} from "../../lib/updater";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import type { ActivityEvent, AppConfig, AppSettings } from "../../types/domain";
 
-type SettingsTab = "appearance" | "notifications" | "automation" | "logging" | "storage" | "updates" | "config" | "activity";
-type UpdateStatus = "idle" | "checking" | "available" | "current" | "installing" | "error";
+type SettingsTab = "appearance" | "notifications" | "automation" | "logging" | "storage" | "config" | "activity";
 
 const settingsTabs: Array<{ key: SettingsTab; label: string }> = [
   { key: "appearance", label: "Appearance" },
@@ -25,7 +15,6 @@ const settingsTabs: Array<{ key: SettingsTab; label: string }> = [
   { key: "automation", label: "Automation" },
   { key: "logging", label: "Logging" },
   { key: "storage", label: "Storage" },
-  { key: "updates", label: "Updates" },
   { key: "config", label: "Config" },
   { key: "activity", label: "Activity" }
 ];
@@ -44,23 +33,6 @@ export function SettingsView() {
   const [redactSecrets, setRedactSecrets] = useState(true);
   const [importError, setImportError] = useState<string>();
   const [integrationError, setIntegrationError] = useState<string>();
-  const [appVersion, setAppVersion] = useState(__APP_VERSION__);
-  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
-  const [updateMessage, setUpdateMessage] = useState<string>();
-  const [updateProgress, setUpdateProgress] = useState<UpdateProgress>();
-
-  useEffect(() => {
-    let mounted = true;
-    getCurrentAppVersion()
-      .then((version) => {
-        if (mounted) setAppVersion(version);
-      })
-      .catch(() => undefined);
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -142,48 +114,6 @@ export function SettingsView() {
     });
     if (projectStoragePath) await patchSettings({ projectStoragePath });
   };
-
-  const checkForUpdates = async () => {
-    setUpdateStatus("checking");
-    setUpdateMessage(undefined);
-    setUpdateProgress(undefined);
-    setAvailableUpdate(null);
-    try {
-      const update = await checkForAppUpdate();
-      if (!update) {
-        setUpdateStatus("current");
-        setUpdateMessage(`Version ${appVersion} is current.`);
-        return;
-      }
-      setAvailableUpdate(update);
-      setUpdateStatus("available");
-      setUpdateMessage(`Version ${update.version} is ready to install.`);
-    } catch (error) {
-      setUpdateStatus("error");
-      setUpdateMessage(error instanceof Error ? error.message : "Unable to check for updates");
-    }
-  };
-
-  const installAvailableUpdate = async () => {
-    if (!availableUpdate) return;
-    const confirmed = await confirmUpdateInstall(availableUpdate.version);
-    if (!confirmed) return;
-    setUpdateStatus("installing");
-    setUpdateMessage("Downloading update...");
-    setUpdateProgress({ downloadedBytes: 0 });
-    try {
-      await installAppUpdate(availableUpdate, (progress) => {
-        setUpdateProgress(progress);
-        setUpdateMessage(progress.percent === undefined ? "Downloading update..." : `Downloading update... ${progress.percent}%`);
-      });
-      setUpdateMessage("Relaunching...");
-    } catch (error) {
-      setUpdateStatus("error");
-      setUpdateMessage(error instanceof Error ? error.message : "Unable to install update");
-    }
-  };
-
-  const updateBusy = updateStatus === "checking" || updateStatus === "installing";
 
   return (
     <main className="page solo-settings-page">
@@ -293,36 +223,6 @@ export function SettingsView() {
                 </div>
               </SettingsRow>
             </SettingsGroup>
-          </SettingsTabPanel>
-        ) : null}
-
-        {activeTab === "updates" ? (
-          <SettingsTabPanel>
-            <SettingsGroup label="Updates">
-              <SettingsRow title="Current version" detail={canUseAppUpdater ? "Desktop app" : "Browser preview"}>
-                <span className="solo-settings-version">{appVersion}</span>
-              </SettingsRow>
-              <SettingsRow title="Update channel" detail="GitHub Releases">
-                <div className="solo-settings-actions">
-                  <button type="button" onClick={checkForUpdates} disabled={!canUseAppUpdater || updateBusy}>
-                    <RefreshCw size={14} />
-                    {updateStatus === "checking" ? "Checking" : "Check"}
-                  </button>
-                  {availableUpdate ? (
-                    <button className="primary-action" type="button" onClick={installAvailableUpdate} disabled={updateBusy}>
-                      <Download size={14} />
-                      {updateStatus === "installing" ? "Installing" : "Install"}
-                    </button>
-                  ) : null}
-                </div>
-              </SettingsRow>
-              {updateStatus === "installing" ? (
-                <SettingsRow title="Download progress" detail={formatUpdateProgress(updateProgress)}>
-                  <progress className="solo-settings-progress" max={100} value={updateProgress?.percent ?? 0} />
-                </SettingsRow>
-              ) : null}
-            </SettingsGroup>
-            {updateMessage ? <p className={updateStatus === "error" ? "solo-settings-error" : "solo-settings-note"}>{updateMessage}</p> : null}
           </SettingsTabPanel>
         ) : null}
 
@@ -443,18 +343,4 @@ function ActivityRow({ item }: { item: ActivityEvent }) {
 function clampNumber(value: number, min: number, max: number, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, value));
-}
-
-function formatUpdateProgress(progress?: UpdateProgress) {
-  if (!progress) return "Waiting for download";
-  if (progress.percent !== undefined) return `${progress.percent}% of ${formatBytes(progress.totalBytes ?? 0)}`;
-  return `${formatBytes(progress.downloadedBytes)} downloaded`;
-}
-
-function formatBytes(bytes: number) {
-  if (bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const value = bytes / 1024 ** index;
-  return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
 }

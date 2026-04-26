@@ -408,11 +408,13 @@ class MockApi {
     return Promise.resolve(this.ok([...this.runtime.values()]));
   }
 
-  getLogHistory(filters: { projectId?: ID; processId?: ID; limit?: number } = {}) {
+  getLogHistory(filters: { projectId?: ID; processId?: ID; limit?: number; since?: string } = {}) {
     const limit = filters.limit ?? 1000;
+    const since = filters.since ? Date.parse(filters.since) : undefined;
     return Promise.resolve(
       this.ok(
         this.logs
+          .filter((log) => since === undefined || Date.parse(log.timestamp) >= since)
           .filter((log) => !filters.projectId || log.projectId === filters.projectId)
           .filter((log) => !filters.processId || log.processId === filters.processId)
           .slice(-limit)

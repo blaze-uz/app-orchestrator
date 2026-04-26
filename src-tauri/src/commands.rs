@@ -515,8 +515,8 @@ pub async fn get_log_history(
 }
 
 #[tauri::command]
-pub async fn clear_log_history(project_id: Option<Id>) -> ApiResponse<bool> {
-    process_manager::clear_log_history(app_state(), project_id).await
+pub async fn clear_log_history(app: AppHandle, project_id: Option<Id>) -> ApiResponse<bool> {
+    process_manager::clear_log_history(app, app_state(), project_id).await
 }
 
 #[tauri::command]

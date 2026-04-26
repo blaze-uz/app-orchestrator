@@ -221,6 +221,13 @@ export interface LogFilters {
   paused: boolean;
 }
 
+export interface LogHistoryRequest {
+  projectId?: ID;
+  processId?: ID;
+  limit?: number;
+  since?: string;
+}
+
 export interface ProjectFilters {
   query: string;
   runningOnly: boolean;

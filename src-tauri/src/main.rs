@@ -10,7 +10,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -27,10 +27,14 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let config = storage::load_config(app.handle());
+            let recent_logs =
+                storage::load_recent_logs(app.handle(), process_manager::log_history_since());
+            let _ = storage::prune_log_history(app.handle(), process_manager::log_history_since());
             let runtime_processes = storage::load_runtime_processes(app.handle(), &config);
-            let state = AppState::new(config, runtime_processes);
+            let state = AppState::new(config, runtime_processes, recent_logs);
             state::set_global_state(state.clone());
             app.manage(state);
+            process_manager::start_log_history_pruner(app.handle().clone(), state::app_state());
             tauri::async_runtime::block_on(process_manager::recover_tracked_processes(
                 app.handle().clone(),
                 state::app_state(),
@@ -90,8 +94,25 @@ pub fn run() {
         .expect("error while building App Orchestrator");
 
     let shutdown_started = shutdown_started.clone();
-    app.run(move |_app_handle, event| {
-        if let tauri::RunEvent::ExitRequested { .. } = event {
+    app.run(move |_app_handle, event| match event {
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } => {
+            api.prevent_close();
+            if let Some(window) = _app_handle.get_webview_window(&label) {
+                let _ = window.hide();
+            }
+        }
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => {
+            if let Some(window) = _app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+        tauri::RunEvent::ExitRequested { .. } => {
             if !shutdown_started.swap(true, Ordering::SeqCst) {
                 tauri::async_runtime::block_on(process_manager::shutdown_tracked_processes(
                     _app_handle.clone(),
@@ -99,6 +120,7 @@ pub fn run() {
                 ));
             }
         }
+        _ => {}
     });
 }
 

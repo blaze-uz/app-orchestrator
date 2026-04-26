@@ -473,4 +473,5 @@ pub struct LogHistoryFilters {
     pub project_id: Option<Id>,
     pub process_id: Option<Id>,
     pub limit: Option<usize>,
+    pub since: Option<DateTime<Utc>>,
 }

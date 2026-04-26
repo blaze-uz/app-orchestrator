@@ -1699,6 +1699,18 @@ small {
   text-transform: none;
 }
 
+.solo-detail-section.settings-like {
+  gap: 14px;
+}
+
+.solo-detail-section.settings-like .solo-detail-section-heading {
+  min-height: 12px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+
 .solo-detail-card {
   border: 1px solid var(--line-strong);
   border-radius: 7px;
@@ -1726,10 +1738,20 @@ small {
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
+.solo-detail-section.settings-like .solo-detail-row {
+  min-height: 62px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 16px;
+}
+
 .solo-detail-row-copy {
   min-width: 0;
   display: grid;
   gap: 4px;
+}
+
+.solo-detail-section.settings-like .solo-detail-row-copy {
+  gap: 3px;
 }
 
 .solo-detail-row-copy strong,
@@ -1744,6 +1766,10 @@ small {
   white-space: nowrap;
 }
 
+.solo-detail-section.settings-like .solo-detail-row-copy strong {
+  line-height: 1.25;
+}
+
 .solo-detail-row-copy small,
 .solo-command-main small {
   min-width: 0;
@@ -1754,6 +1780,10 @@ small {
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.solo-detail-section.settings-like .solo-detail-row-copy small {
+  line-height: 1.25;
 }
 
 .solo-detail-value {
@@ -1772,6 +1802,11 @@ small {
   align-items: center;
   justify-content: end;
   gap: 8px;
+}
+
+.solo-detail-section.settings-like .solo-detail-actions {
+  min-width: 0;
+  justify-content: flex-end;
 }
 
 .solo-detail-actions > button:has(svg) {
@@ -1800,6 +1835,11 @@ small {
   gap: 8px;
 }
 
+.solo-detail-section.settings-like .solo-icon-control {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .solo-icon-control .solo-mark {
   background: var(--mark-soft-bg);
 }
@@ -1826,6 +1866,7 @@ small {
   height: 18px;
   border-radius: 999px;
   display: inline-flex;
+  flex: 0 0 auto;
   background: var(--switch-bg);
   cursor: pointer;
 }
@@ -1845,6 +1886,7 @@ small {
   border-radius: 50%;
   background: var(--switch-knob);
   box-shadow: 0 1px 2px var(--switch-shadow);
+  transition: transform 140ms ease;
 }
 
 .solo-switch.checked {
@@ -2705,6 +2747,7 @@ button.danger-button:hover {
 .solo-settings-esc {
   color: var(--muted);
   font-size: 10px;
+  line-height: 1;
 }
 
 .solo-settings-tabs {
@@ -2721,12 +2764,13 @@ button.danger-button:hover {
 .solo-settings-tabs button {
   min-height: 24px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   box-shadow: none;
   color: var(--text-soft);
   padding: 0 10px;
   font-size: 12px;
+  line-height: 1;
   white-space: nowrap;
 }
 
@@ -2744,6 +2788,7 @@ button.danger-button:hover {
 .solo-settings-body {
   min-height: 0;
   overflow: auto;
+  background: var(--workspace-bg);
 }
 
 .solo-settings-panel {
@@ -2759,6 +2804,7 @@ button.danger-button:hover {
   color: var(--text-soft);
   font-size: 12px;
   font-weight: 500;
+  line-height: 1;
   text-transform: uppercase;
 }
 
@@ -2800,12 +2846,14 @@ button.danger-button:hover {
 .solo-settings-row strong {
   color: var(--text);
   font-size: 13px;
+  line-height: 1.25;
   font-weight: 500;
 }
 
 .solo-settings-row small {
   color: var(--text-soft);
   font-size: 12px;
+  line-height: 1.25;
   font-weight: 400;
 }
 
@@ -2851,6 +2899,7 @@ button.danger-button:hover {
   width: 32px;
   height: 18px;
   display: inline-flex;
+  flex: 0 0 auto;
 }
 
 .solo-settings-switch input {
@@ -2897,25 +2946,7 @@ button.danger-button:hover {
   width: 118px;
   min-height: 28px;
   padding: 5px 8px;
-}
-
-.solo-settings-version {
-  min-height: 24px;
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
-  display: inline-flex;
-  align-items: center;
-  color: var(--text);
-  background: var(--surface-2);
-  padding: 0 9px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
-}
-
-.solo-settings-progress {
-  width: 180px;
-  height: 8px;
-  accent-color: var(--accent-strong);
 }
 
 .solo-settings-actions {
@@ -2929,6 +2960,7 @@ button.danger-button:hover {
 .solo-settings-actions button {
   min-height: 28px;
   padding: 0 10px;
+  font-size: 13px;
 }
 
 .solo-settings-actions button[title] {
@@ -2943,16 +2975,6 @@ button.danger-button:hover {
   border-radius: 7px;
   background: var(--danger-soft);
   color: var(--bad);
-  padding: 9px 10px;
-  font-size: 12px;
-}
-
-.solo-settings-note {
-  margin: -22px 0 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--text-soft);
   padding: 9px 10px;
   font-size: 12px;
 }
@@ -3261,8 +3283,20 @@ button.danger-button:hover {
     padding: 10px 14px;
   }
 
+  .solo-detail-section.settings-like .solo-detail-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 9px;
+    padding: 10px 14px;
+  }
+
   .solo-detail-actions,
   .solo-command-actions {
+    justify-content: flex-start;
+  }
+
+  .solo-detail-section.settings-like .solo-detail-actions,
+  .solo-detail-section.settings-like .solo-icon-control {
     justify-content: flex-start;
   }
 

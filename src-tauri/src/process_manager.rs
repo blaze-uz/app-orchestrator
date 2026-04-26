@@ -8,7 +8,7 @@ use crate::{
     state::AppState,
     storage,
 };
-use chrono::Utc;
+use chrono::{Duration as ChronoDuration, Utc};
 use nix::{
     errno::Errno,
     sys::resource::{setrlimit, Resource},
@@ -29,6 +29,12 @@ use tokio::{
     process::Command,
     time::{sleep, Instant},
 };
+
+const LOG_HISTORY_WINDOW_MINUTES: i64 = 5;
+
+pub fn log_history_since() -> chrono::DateTime<Utc> {
+    Utc::now() - ChronoDuration::minutes(LOG_HISTORY_WINDOW_MINUTES)
+}
 
 pub async fn get_project_detail(
     state: &AppState,
@@ -1568,11 +1574,19 @@ pub async fn get_log_history(
         project_id: None,
         process_id: None,
         limit: Some(1000),
+        since: Some(log_history_since()),
     });
     let limit = filters.limit.unwrap_or(1000);
     let logs = state.runtime.logs.read().await;
     ApiResponse::ok(
         logs.iter()
+            .filter(|log| {
+                filters
+                    .since
+                    .as_ref()
+                    .map(|since| log.timestamp >= *since)
+                    .unwrap_or(true)
+            })
             .filter(|log| {
                 filters
                     .project_id
@@ -1597,11 +1611,27 @@ pub async fn get_log_history(
     )
 }
 
-pub async fn clear_log_history(state: AppState, project_id: Option<Id>) -> ApiResponse<bool> {
+pub async fn clear_log_history(
+    app: AppHandle,
+    state: AppState,
+    project_id: Option<Id>,
+) -> ApiResponse<bool> {
     let mut logs = state.runtime.logs.write().await;
     match project_id {
-        Some(project_id) => logs.retain(|log| log.project_id != project_id),
-        None => logs.clear(),
+        Some(project_id) => {
+            logs.retain(|log| log.project_id != project_id);
+            let _log_history_io = state.runtime.log_history_io.lock().await;
+            if let Err(error) = storage::clear_log_history(&app, Some(&project_id)) {
+                return ApiResponse::err(error);
+            }
+        }
+        None => {
+            logs.clear();
+            let _log_history_io = state.runtime.log_history_io.lock().await;
+            if let Err(error) = storage::clear_log_history(&app, None) {
+                return ApiResponse::err(error);
+            }
+        }
     }
     ApiResponse::ok(true)
 }
@@ -1614,6 +1644,7 @@ pub async fn export_logs(
         project_id: None,
         process_id: None,
         limit: None,
+        since: None,
     });
     let logs = state.runtime.logs.read().await;
     let selected: Vec<LogEntry> = logs
@@ -1843,7 +1874,21 @@ async fn append_log(
             logs.drain(0..drain_count);
         }
     }
+    {
+        let _log_history_io = state.runtime.log_history_io.lock().await;
+        let _ = storage::append_log_entry(app, &entry);
+    }
     let _ = app.emit("process_log", entry);
+}
+
+pub fn start_log_history_pruner(app: AppHandle, state: AppState) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            sleep(Duration::from_secs(60)).await;
+            let _log_history_io = state.runtime.log_history_io.lock().await;
+            let _ = storage::prune_log_history(&app, log_history_since());
+        }
+    });
 }
 
 async fn mark_spawn_failure(
