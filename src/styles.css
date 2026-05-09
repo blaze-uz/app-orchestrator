@@ -2979,6 +2979,16 @@ button.danger-button:hover {
   font-size: 12px;
 }
 
+.solo-settings-success {
+  margin: -22px 0 0;
+  border: 1px solid var(--good-border);
+  border-radius: 7px;
+  background: var(--good-soft);
+  color: var(--good);
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
 .solo-settings-activity.warn strong {
   color: var(--warn);
 }

@@ -77,6 +77,7 @@ export const api = {
   detectPortsInUse: () => command<Array<{ host: string; port: number; process?: string }>>("detect_ports_in_use"),
   getConfig: () => command<AppConfig>("get_config"),
   updateSettings: (settings: AppSettings) => command<AppSettings>("update_settings", { settings }),
+  applyMediaGuardPreset: (basePath?: string) => command<AppConfig>("apply_media_guard_preset", { basePath }),
   importConfig: (config: AppConfig) => command<AppConfig>("import_config", { config }),
   exportConfig: (redactSecrets = true) => command<string>("export_config", { redactSecrets }),
   getDashboardSummary: () => command<DashboardSummary>("get_dashboard_summary")

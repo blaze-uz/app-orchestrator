@@ -64,6 +64,7 @@ interface OrchestratorState {
   restartFailed: (projectId?: ID) => Promise<void>;
   runHealthCheck: (processId: ID) => Promise<void>;
   clearLogs: (projectId?: ID) => Promise<void>;
+  applyMediaGuardPreset: (basePath?: string) => Promise<boolean>;
   importConfig: (config: AppConfig) => Promise<void>;
   exportConfig: (redactSecrets?: boolean) => Promise<string>;
   exportLogs: () => Promise<string>;
@@ -325,6 +326,14 @@ export const useOrchestratorStore = create<OrchestratorState>((set, get) => ({
       await api.clearLogHistory(projectId).then(unwrap);
       set((state) => ({ logs: state.logs.filter((log) => projectId && log.projectId !== projectId) }));
     });
+  },
+  applyMediaGuardPreset: async (basePath) => {
+    const applied = await safeAction(set, { key: "mediaguard-preset", label: "Syncing MediaGuard" }, async () => {
+      await api.applyMediaGuardPreset(basePath).then(unwrap);
+      await get().refreshAll();
+      return true;
+    });
+    return Boolean(applied);
   },
   importConfig: async (config) => {
     await safeAction(set, { key: "import-config", label: "Importing config" }, async () => {

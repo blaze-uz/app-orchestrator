@@ -1,4 +1,5 @@
 use crate::{
+    mediaguard_preset,
     models::{
         ApiError, ApiResponse, AppConfig, AppSettings, DashboardSummary, Id, ProcessDefinition,
         ProcessFormInput, Project, ProjectFormInput, ValidationResult, Workspace,
@@ -636,6 +637,28 @@ pub async fn update_settings(app: AppHandle, settings: AppSettings) -> ApiRespon
 }
 
 #[tauri::command]
+pub async fn apply_media_guard_preset(
+    app: AppHandle,
+    base_path: Option<String>,
+) -> ApiResponse<AppConfig> {
+    let state = app_state();
+    let mut config = state.config.write().await;
+    mediaguard_preset::apply(&mut config, base_path);
+    config.activity.insert(
+        0,
+        storage::activity(
+            crate::models::ActivityType::ConfigImported,
+            "MediaGuard project preset synced",
+            "info",
+            None,
+            None,
+        ),
+    );
+    sync_runtime_registry_with_config(&app, &state, &config).await;
+    save_response(&app, &config, config.clone())
+}
+
+#[tauri::command]
 pub async fn import_config(app: AppHandle, config: AppConfig) -> ApiResponse<AppConfig> {
     let state = app_state();
     let config = storage::migrate_config(config);
@@ -655,19 +678,7 @@ pub async fn import_config(app: AppHandle, config: AppConfig) -> ApiResponse<App
     }
     {
         let config = state.config.read().await;
-        let mut states = state.runtime.states.write().await;
-        states.clear();
-        for process in &config.processes {
-            states.insert(
-                process.id.clone(),
-                crate::models::ProcessRuntimeState::stopped(process.id.clone()),
-            );
-        }
-        let mut pids = state.runtime.pids.write().await;
-        let mut records = state.runtime.process_records.write().await;
-        pids.clear();
-        records.clear();
-        let _ = storage::save_runtime_processes(&app, &records);
+        reset_runtime_registry_for_config(&app, &state, &config).await;
         save_response(&app, &config, config.clone())
     }
 }
@@ -716,6 +727,48 @@ fn save_response<T: serde::Serialize>(
     match storage::save_config(app, config) {
         Ok(_) => ApiResponse::ok(data),
         Err(error) => ApiResponse::err(error),
+    }
+}
+
+async fn reset_runtime_registry_for_config(app: &AppHandle, state: &AppState, config: &AppConfig) {
+    let mut states = state.runtime.states.write().await;
+    states.clear();
+    for process in &config.processes {
+        states.insert(
+            process.id.clone(),
+            crate::models::ProcessRuntimeState::stopped(process.id.clone()),
+        );
+    }
+    let mut pids = state.runtime.pids.write().await;
+    let mut records = state.runtime.process_records.write().await;
+    pids.clear();
+    records.clear();
+    let _ = storage::save_runtime_processes(app, &records);
+}
+
+async fn sync_runtime_registry_with_config(app: &AppHandle, state: &AppState, config: &AppConfig) {
+    let process_ids: HashSet<_> = config
+        .processes
+        .iter()
+        .map(|process| process.id.clone())
+        .collect();
+    {
+        let mut states = state.runtime.states.write().await;
+        states.retain(|process_id, _| process_ids.contains(process_id));
+        for process in &config.processes {
+            states
+                .entry(process.id.clone())
+                .or_insert_with(|| crate::models::ProcessRuntimeState::stopped(process.id.clone()));
+        }
+    }
+    {
+        let mut pids = state.runtime.pids.write().await;
+        pids.retain(|process_id, _| process_ids.contains(process_id));
+    }
+    {
+        let mut records = state.runtime.process_records.write().await;
+        records.retain(|process_id, _| process_ids.contains(process_id));
+        let _ = storage::save_runtime_processes(app, &records);
     }
 }
 

@@ -1,5 +1,6 @@
 mod commands;
 mod health;
+mod mediaguard_preset;
 mod models;
 mod process_manager;
 mod state;
@@ -87,6 +88,7 @@ pub fn run() {
             commands::validate_project_path,
             commands::detect_ports_in_use,
             commands::update_settings,
+            commands::apply_media_guard_preset,
             commands::import_config,
             commands::export_config
         ])

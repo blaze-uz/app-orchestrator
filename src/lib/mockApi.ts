@@ -476,6 +476,11 @@ class MockApi {
     return Promise.resolve(this.ok(settings));
   }
 
+  applyMediaGuardPreset(_basePath?: string) {
+    this.config.activity.unshift(activity("config_imported", "MediaGuard project preset synced"));
+    return Promise.resolve(this.ok(this.config));
+  }
+
   importConfig(config: AppConfig) {
     this.config = config;
     this.runtime.clear();

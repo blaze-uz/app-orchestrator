@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import { Download, FolderOpen, RotateCcw, Upload } from "lucide-react";
+import { Download, FolderOpen, RefreshCw, RotateCcw, Upload } from "lucide-react";
 import { getLaunchOnLoginEnabled, setLaunchOnLoginEnabled } from "../../lib/autostart";
 import { selectFolder } from "../../lib/folderPicker";
 import { ensureNotificationPermission } from "../../lib/notifications";
@@ -25,6 +25,7 @@ export function SettingsView() {
   const updateSettings = useOrchestratorStore((state) => state.updateSettings);
   const exportConfig = useOrchestratorStore((state) => state.exportConfig);
   const importConfig = useOrchestratorStore((state) => state.importConfig);
+  const applyMediaGuardPreset = useOrchestratorStore((state) => state.applyMediaGuardPreset);
   const activity = useOrchestratorStore((state) => state.activity);
   const selectView = useOrchestratorStore((state) => state.selectView);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -32,6 +33,7 @@ export function SettingsView() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
   const [redactSecrets, setRedactSecrets] = useState(true);
   const [importError, setImportError] = useState<string>();
+  const [presetMessage, setPresetMessage] = useState<string>();
   const [integrationError, setIntegrationError] = useState<string>();
 
   useEffect(() => {
@@ -113,6 +115,21 @@ export function SettingsView() {
       prompt: "Project storage folder path"
     });
     if (projectStoragePath) await patchSettings({ projectStoragePath });
+  };
+
+  const syncMediaGuardPreset = async () => {
+    setImportError(undefined);
+    setPresetMessage(undefined);
+    try {
+      const applied = await applyMediaGuardPreset();
+      if (applied) {
+        setPresetMessage("MediaGuard projects synced.");
+      } else {
+        setImportError("MediaGuard sync failed");
+      }
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "MediaGuard sync failed");
+    }
   };
 
   return (
@@ -255,7 +272,16 @@ export function SettingsView() {
                   />
                 </div>
               </SettingsRow>
+              <SettingsRow title="MediaGuard preset" detail="Refresh project and process definitions for the local MediaGuard stack">
+                <div className="solo-settings-actions">
+                  <button type="button" onClick={syncMediaGuardPreset}>
+                    <RefreshCw size={14} />
+                    Sync
+                  </button>
+                </div>
+              </SettingsRow>
             </SettingsGroup>
+            {presetMessage ? <p className="solo-settings-success">{presetMessage}</p> : null}
             {importError ? <p className="solo-settings-error">{importError}</p> : null}
           </SettingsTabPanel>
         ) : null}
