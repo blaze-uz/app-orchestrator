@@ -719,15 +719,27 @@ pub struct WorkspaceInput {
     pub description: Option<String>,
 }
 
+const MAX_ACTIVITY_EVENTS: usize = 500;
+
 fn save_response<T: serde::Serialize>(
     app: &AppHandle,
     config: &AppConfig,
     data: T,
 ) -> ApiResponse<T> {
-    match storage::save_config(app, config) {
+    let config = trim_activity_for_save(config);
+    match storage::save_config(app, &config) {
         Ok(_) => ApiResponse::ok(data),
         Err(error) => ApiResponse::err(error),
     }
+}
+
+fn trim_activity_for_save(config: &AppConfig) -> AppConfig {
+    if config.activity.len() <= MAX_ACTIVITY_EVENTS {
+        return config.clone();
+    }
+    let mut trimmed = config.clone();
+    trimmed.activity.truncate(MAX_ACTIVITY_EVENTS);
+    trimmed
 }
 
 async fn reset_runtime_registry_for_config(app: &AppHandle, state: &AppState, config: &AppConfig) {

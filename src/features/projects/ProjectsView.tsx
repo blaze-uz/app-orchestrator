@@ -1,6 +1,7 @@
 import { FolderOpen, FolderPlus, Play, RotateCcw, Square, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { StatusBadge } from "../../components/StatusBadge";
+import { useConfirm } from "../../components/ConfirmDialog";
 import { selectFolder } from "../../lib/folderPicker";
 import { normalizeMemoryLimitMb } from "../../lib/memory";
 import { deriveProjectStatus, FAILED_STATUSES } from "../../lib/status";
@@ -30,6 +31,7 @@ export function ProjectsView() {
   const stopProject = useOrchestratorStore((state) => state.stopProject);
   const restartProject = useOrchestratorStore((state) => state.restartProject);
   const deleteProject = useOrchestratorStore((state) => state.deleteProject);
+  const confirm = useConfirm();
 
   const rows = useMemo(
     () =>
@@ -71,13 +73,13 @@ export function ProjectsView() {
         <section className="editor-panel">
           <div className="form-grid">
             <label>
-              Name
-              <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="MediaGuard" />
+              Name<span className="required-marker" aria-hidden="true">*</span>
+              <input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="MediaGuard" />
             </label>
             <label>
-              Root path
+              Root path<span className="required-marker" aria-hidden="true">*</span>
               <span className="path-picker">
-                <input value={draft.rootPath} readOnly placeholder="Select a local project folder" onClick={chooseRootPath} />
+                <input required value={draft.rootPath} readOnly placeholder="Select a local project folder" onClick={chooseRootPath} />
                 <button type="button" onClick={chooseRootPath} title="Select project folder">
                   <FolderOpen size={16} />
                   Browse
@@ -149,8 +151,14 @@ export function ProjectsView() {
               <button
                 className="danger-button"
                 type="button"
-                onClick={() => {
-                  if (window.confirm(`Delete project "${project.name}" and its process definitions?`)) void deleteProject(project.id);
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: `Delete ${project.name}?`,
+                    message: "This removes the project and all of its process definitions. Running processes will be stopped.",
+                    confirmLabel: "Delete",
+                    danger: true,
+                  });
+                  if (ok) void deleteProject(project.id);
                 }}
                 title="Delete project"
               >

@@ -7,11 +7,25 @@ mod state;
 mod storage;
 
 use state::AppState;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
 use tauri::{Manager, WindowEvent};
+
+fn run_startup_step<F: FnOnce()>(name: &str, step: F) {
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(step)) {
+        let message = if let Some(msg) = payload.downcast_ref::<&str>() {
+            (*msg).to_string()
+        } else if let Some(msg) = payload.downcast_ref::<String>() {
+            msg.clone()
+        } else {
+            "unknown panic".to_string()
+        };
+        eprintln!("[startup] {name} panicked: {message}");
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -36,18 +50,24 @@ pub fn run() {
             state::set_global_state(state.clone());
             app.manage(state);
             process_manager::start_log_history_pruner(app.handle().clone(), state::app_state());
-            tauri::async_runtime::block_on(process_manager::recover_tracked_processes(
-                app.handle().clone(),
-                state::app_state(),
-            ));
-            tauri::async_runtime::block_on(process_manager::sync_external_processes(
-                app.handle().clone(),
-                state::app_state(),
-            ));
-            tauri::async_runtime::block_on(process_manager::start_marked_projects_on_launch(
-                app.handle().clone(),
-                state::app_state(),
-            ));
+            run_startup_step("recover_tracked_processes", || {
+                tauri::async_runtime::block_on(process_manager::recover_tracked_processes(
+                    app.handle().clone(),
+                    state::app_state(),
+                ))
+            });
+            run_startup_step("sync_external_processes", || {
+                tauri::async_runtime::block_on(process_manager::sync_external_processes(
+                    app.handle().clone(),
+                    state::app_state(),
+                ))
+            });
+            run_startup_step("start_marked_projects_on_launch", || {
+                tauri::async_runtime::block_on(process_manager::start_marked_projects_on_launch(
+                    app.handle().clone(),
+                    state::app_state(),
+                ))
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

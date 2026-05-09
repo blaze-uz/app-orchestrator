@@ -56,13 +56,15 @@ pub async fn run_health_check(
             command,
             args,
             working_directory,
+            timeout_ms,
         } => {
             let mut cmd = Command::new(command);
             cmd.args(args);
             if let Some(cwd) = working_directory.as_deref().or(default_cwd) {
                 cmd.current_dir(cwd);
             }
-            let output = timeout(Duration::from_secs(12), cmd.output())
+            let timeout_duration = Duration::from_millis(timeout_ms.unwrap_or(12_000));
+            let output = timeout(timeout_duration, cmd.output())
                 .await
                 .map_err(|_| {
                     ApiError::new("HEALTHCHECK_FAILED", "Custom health check timed out", true)
@@ -98,10 +100,27 @@ async fn http_status(url: &str, timeout_ms: u64) -> Result<u16, ApiError> {
         )
     })?;
     let (host_port, path) = stripped.split_once('/').unwrap_or((stripped, ""));
-    let (host, port) = host_port
-        .split_once(':')
-        .map(|(host, port)| (host, port.parse::<u16>().unwrap_or(80)))
-        .unwrap_or((host_port, 80));
+    let (host, port) = match host_port.split_once(':') {
+        Some((host, port_str)) => {
+            let port = port_str.parse::<u16>().map_err(|error| {
+                ApiError::with_details(
+                    "HEALTHCHECK_FAILED",
+                    "HTTP health check URL has an invalid port",
+                    error,
+                    false,
+                )
+            })?;
+            (host, port)
+        }
+        None => (host_port, 80),
+    };
+    if host.is_empty() {
+        return Err(ApiError::new(
+            "HEALTHCHECK_FAILED",
+            "HTTP health check URL is missing a host",
+            false,
+        ));
+    }
     let mut stream = timeout(
         Duration::from_millis(timeout_ms),
         TcpStream::connect((host, port)),

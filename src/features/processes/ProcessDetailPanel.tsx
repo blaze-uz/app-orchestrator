@@ -1,6 +1,8 @@
 import { Clipboard, HeartPulse, Play, RotateCcw, Square } from "lucide-react";
 import { LiveLogViewer } from "../../components/LiveLogViewer";
 import { StatusBadge } from "../../components/StatusBadge";
+import { useConfirm } from "../../components/ConfirmDialog";
+import { RuntimeDot } from "../../components/RuntimeDot";
 import { formatMemory, formatMemoryLimit } from "../../lib/memory";
 import { isRuntimeBusy } from "../../lib/status";
 import { formatClock, formatRelativeTime } from "../../lib/time";
@@ -20,6 +22,7 @@ export function ProcessDetailPanel() {
   const runHealthCheck = useOrchestratorStore((state) => state.runHealthCheck);
   const clearLogs = useOrchestratorStore((state) => state.clearLogs);
   const exportLogs = useOrchestratorStore((state) => state.exportLogs);
+  const confirm = useConfirm();
   const process = processes.find((item) => item.id === selectedProcessId) ?? processes[0];
   const runtime = process ? runtimeStates[process.id] : undefined;
   const project = projects.find((item) => item.id === process?.projectId);
@@ -49,7 +52,7 @@ export function ProcessDetailPanel() {
     <main className="page process-inspector-page">
       <header className="process-inspector-header">
         <div className="process-title-cell">
-          <span className={`runtime-dot ${runtime?.currentStatus ?? "stopped"}`} />
+          <RuntimeDot status={runtime?.currentStatus} />
           <span>
             <small>{project?.name ?? "Project"}</small>
             <strong>{process.name}</strong>
@@ -91,8 +94,15 @@ export function ProcessDetailPanel() {
           liveTail={logFilters.liveTail}
           onPausedChange={(paused) => setLogFilters({ paused })}
           onLiveTailChange={(liveTail) => setLogFilters({ liveTail })}
-          onClear={() => {
-            if (project && window.confirm("Clear logs for this project?")) void clearLogs(project.id);
+          onClear={async () => {
+            if (!project) return;
+            const ok = await confirm({
+              title: "Clear logs for this project?",
+              message: "Logs will be removed from memory and on-disk history.",
+              confirmLabel: "Clear logs",
+              danger: true,
+            });
+            if (ok) void clearLogs(project.id);
           }}
           onExport={exportProcessLogs}
         />

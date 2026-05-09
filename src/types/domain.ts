@@ -71,6 +71,7 @@ export interface CustomHealthCheck {
   command: string;
   args: string[];
   workingDirectory?: string;
+  timeoutMs?: number;
 }
 
 export interface NoHealthCheck {

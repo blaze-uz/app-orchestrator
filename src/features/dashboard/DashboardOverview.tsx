@@ -1,6 +1,7 @@
 import { AlertTriangle, CirclePower, FolderKanban, TerminalSquare, Zap } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { StatusBadge } from "../../components/StatusBadge";
+import { RuntimeDot } from "../../components/RuntimeDot";
 import { formatMemory } from "../../lib/memory";
 import { deriveProjectStatus, FAILED_STATUSES } from "../../lib/status";
 import { formatPath, formatRelativeTime } from "../../lib/time";
@@ -49,7 +50,7 @@ export function DashboardOverview() {
           <p>Live health across local projects and commands.</p>
         </div>
         <div className="compact-header-summary" aria-label={`${runningProcessCount} of ${processTotal} processes running`}>
-          <span className={`runtime-dot ${headlineStatus}`} />
+          <RuntimeDot status={headlineStatus} />
           <strong>{runningProcessCount}</strong>
           <small>of {processTotal} running</small>
         </div>
@@ -137,7 +138,7 @@ function StatusMetric({ icon: Icon, label, value, tone = "neutral" }: { icon: Lu
 function ProcessIdentity({ process, project, runtime }: { process: ProcessDefinition; project?: Project; runtime?: ProcessRuntimeState }) {
   return (
     <span className="process-status-main">
-      <span className={`runtime-dot ${runtime?.currentStatus ?? "stopped"}`} />
+      <RuntimeDot status={runtime?.currentStatus} />
       <span>
         <strong>{process.name}</strong>
         <small>{project ? project.name : process.command}</small>

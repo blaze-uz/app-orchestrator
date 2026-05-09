@@ -1616,22 +1616,16 @@ pub async fn clear_log_history(
     state: AppState,
     project_id: Option<Id>,
 ) -> ApiResponse<bool> {
-    let mut logs = state.runtime.logs.write().await;
-    match project_id {
-        Some(project_id) => {
-            logs.retain(|log| log.project_id != project_id);
-            let _log_history_io = state.runtime.log_history_io.lock().await;
-            if let Err(error) = storage::clear_log_history(&app, Some(&project_id)) {
-                return ApiResponse::err(error);
-            }
+    {
+        let mut logs = state.runtime.logs.write().await;
+        match project_id.as_deref() {
+            Some(project_id) => logs.retain(|log| log.project_id != project_id),
+            None => logs.clear(),
         }
-        None => {
-            logs.clear();
-            let _log_history_io = state.runtime.log_history_io.lock().await;
-            if let Err(error) = storage::clear_log_history(&app, None) {
-                return ApiResponse::err(error);
-            }
-        }
+    }
+    let _log_history_io = state.runtime.log_history_io.lock().await;
+    if let Err(error) = storage::clear_log_history(&app, project_id.as_deref()) {
+        return ApiResponse::err(error);
     }
     ApiResponse::ok(true)
 }

@@ -1,5 +1,6 @@
 import { Download, Search, Trash2 } from "lucide-react";
 import { LiveLogViewer } from "../../components/LiveLogViewer";
+import { useConfirm } from "../../components/ConfirmDialog";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import type { LogLevel, StreamType } from "../../types/domain";
 
@@ -11,6 +12,7 @@ export function LogsView() {
   const setLogFilters = useOrchestratorStore((state) => state.setLogFilters);
   const clearLogs = useOrchestratorStore((state) => state.clearLogs);
   const exportLogs = useOrchestratorStore((state) => state.exportLogs);
+  const confirm = useConfirm();
 
   const visibleLogs = logs
     .filter((log) => !filters.projectId || log.projectId === filters.projectId)
@@ -41,8 +43,14 @@ export function LogsView() {
           </button>
           <button
             type="button"
-            onClick={() => {
-              if (window.confirm("Clear all local logs?")) void clearLogs();
+            onClick={async () => {
+              const ok = await confirm({
+                title: "Clear all local logs?",
+                message: "Logs across every project will be removed from memory and on-disk history.",
+                confirmLabel: "Clear logs",
+                danger: true,
+              });
+              if (ok) void clearLogs();
             }}
           >
             <Trash2 size={16} />
@@ -93,8 +101,13 @@ export function LogsView() {
         liveTail={filters.liveTail}
         onPausedChange={(paused) => setLogFilters({ paused })}
         onLiveTailChange={(liveTail) => setLogFilters({ liveTail })}
-        onClear={() => {
-          if (window.confirm("Clear filtered project logs?")) void clearLogs(filters.projectId);
+        onClear={async () => {
+          const ok = await confirm({
+            title: filters.projectId ? "Clear logs for the selected project?" : "Clear all local logs?",
+            confirmLabel: "Clear logs",
+            danger: true,
+          });
+          if (ok) void clearLogs(filters.projectId);
         }}
         onExport={exportVisible}
       />

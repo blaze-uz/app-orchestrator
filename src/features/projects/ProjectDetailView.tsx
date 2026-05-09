@@ -2,6 +2,8 @@ import { Check, Copy, Edit3, FolderOpen, Play, Plus, RotateCcw, Square, Trash2, 
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { StatusBadge } from "../../components/StatusBadge";
+import { useConfirm } from "../../components/ConfirmDialog";
+import { RuntimeDot } from "../../components/RuntimeDot";
 import { api } from "../../lib/api";
 import { formatMemory, formatMemoryLimit, normalizeMemoryLimitMb, parseMemoryLimitInput } from "../../lib/memory";
 import { ensureNotificationPermission } from "../../lib/notifications";
@@ -56,6 +58,7 @@ export function ProjectDetailView() {
   const restartProject = useOrchestratorStore((state) => state.restartProject);
   const settings = useOrchestratorStore((state) => state.settings);
   const updateSettings = useOrchestratorStore((state) => state.updateSettings);
+  const confirm = useConfirm();
   const [formOpen, setFormOpen] = useState(false);
   const [draft, setDraft] = useState<ProcessFormInput | null>(null);
   const [processFormError, setProcessFormError] = useState<string>();
@@ -216,7 +219,11 @@ export function ProjectDetailView() {
           <button type="button" onClick={() => restartProject(project.id)} title="Restart all">
             <RotateCcw size={14} />
           </button>
-          <button type="button" onClick={() => window.confirm("Stop all processes in this project?") && stopProject(project.id)} title="Stop all">
+          <button type="button" onClick={async () => {
+            if (await confirm({ title: "Stop all processes in this project?", confirmLabel: "Stop all", danger: true })) {
+              void stopProject(project.id);
+            }
+          }} title="Stop all">
             <Square size={14} />
           </button>
         </div>
@@ -335,16 +342,16 @@ export function ProjectDetailView() {
               <div className="editor-panel inline solo-command-editor">
                 <div className="form-grid">
                   <label>
-                    Name
-                    <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Vite dev server" />
+                    Name<span className="required-marker" aria-hidden="true">*</span>
+                    <input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Vite dev server" />
                   </label>
                   <label>
-                    Key
-                    <input {...technicalInputProps} value={draft.key} onChange={(event) => setDraft({ ...draft, key: event.target.value })} placeholder="vite" />
+                    Key<span className="required-marker" aria-hidden="true">*</span>
+                    <input required {...technicalInputProps} value={draft.key} onChange={(event) => setDraft({ ...draft, key: event.target.value })} placeholder="vite" />
                   </label>
                   <label>
-                    Command
-                    <input {...technicalInputProps} value={draft.command} onChange={(event) => setDraft({ ...draft, command: normalizeCliText(event.target.value) })} placeholder="npm" />
+                    Command<span className="required-marker" aria-hidden="true">*</span>
+                    <input required {...technicalInputProps} value={draft.command} onChange={(event) => setDraft({ ...draft, command: normalizeCliText(event.target.value) })} placeholder="npm" />
                   </label>
                   <label>
                     Args
@@ -402,8 +409,14 @@ export function ProjectDetailView() {
                   onStop={() => stopProcess(process.id)}
                   onRestart={() => restartProcess(process.id)}
                   onMemoryLimitCommit={(memoryLimitMb) => updateProcess({ ...process, memoryLimitMb })}
-                  onDelete={() => {
-                    if (window.confirm(`Delete ${process.name}?`)) void deleteProcess(process.id);
+                  onDelete={async () => {
+                    const ok = await confirm({
+                      title: `Delete ${process.name}?`,
+                      message: "The process definition will be removed. A running instance will be stopped.",
+                      confirmLabel: "Delete",
+                      danger: true,
+                    });
+                    if (ok) void deleteProcess(process.id);
                   }}
                 />
               ))}
@@ -414,8 +427,14 @@ export function ProjectDetailView() {
           <button
             className="solo-remove-project"
             type="button"
-            onClick={() => {
-              if (window.confirm(`Delete project "${project.name}" and its process definitions?`)) void deleteProject(project.id);
+            onClick={async () => {
+              const ok = await confirm({
+                title: `Delete ${project.name}?`,
+                message: "This removes the project and all of its process definitions. Running processes will be stopped.",
+                confirmLabel: "Delete",
+                danger: true,
+              });
+              if (ok) void deleteProject(project.id);
             }}
           >
             <Trash2 size={14} />
@@ -486,7 +505,7 @@ function CommandRow({
   return (
     <div className="solo-command-row">
       <button type="button" className="solo-command-main" onClick={onSelect}>
-        <span className={`runtime-dot ${runtime?.currentStatus ?? "stopped"}`} />
+        <RuntimeDot status={runtime?.currentStatus} />
         <span>
           <strong>{process.name}</strong>
           <small>{formatProcessCommand(process)}</small>

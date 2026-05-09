@@ -12,6 +12,7 @@ import {
   Square
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { RuntimeDot } from "./RuntimeDot";
 import { formatMemory } from "../lib/memory";
 import { isRuntimeBusy } from "../lib/status";
 import { formatRelativeTime } from "../lib/time";
@@ -325,7 +326,7 @@ function ProcessRow({
   return (
     <div className={`solo-process-row ${selected ? "active" : ""} ${shortcutsVisible ? "shortcut-mode" : ""}`}>
       <button className="solo-process-main" type="button" onClick={onSelect}>
-        <span className={`runtime-dot ${runtime?.currentStatus ?? "stopped"}`} />
+        <RuntimeDot status={runtime?.currentStatus} />
         <span>{process.name}</span>
       </button>
       <small className="solo-process-meta">{processMeta(process, runtime)}</small>

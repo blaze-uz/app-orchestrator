@@ -147,6 +147,8 @@ pub enum HealthCheck {
         command: String,
         args: Vec<String>,
         working_directory: Option<String>,
+        #[serde(default)]
+        timeout_ms: Option<u64>,
     },
 }
 

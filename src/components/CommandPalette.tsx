@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-react";
 import { Activity, Columns3, FolderKanban, LayoutDashboard, Play, RotateCcw, Search, Settings, Square, TerminalSquare } from "lucide-react";
 import { formatPath } from "../lib/time";
 import { useOrchestratorStore } from "../stores/orchestratorStore";
+import { useConfirm } from "./ConfirmDialog";
 
 interface PaletteCommand {
   id: string;
@@ -31,6 +32,7 @@ export function CommandPalette() {
   const stopProcess = useOrchestratorStore((state) => state.stopProcess);
   const restartProcess = useOrchestratorStore((state) => state.restartProcess);
   const restartFailed = useOrchestratorStore((state) => state.restartFailed);
+  const confirm = useConfirm();
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
 
@@ -110,7 +112,12 @@ export function CommandPalette() {
         section: "Workspace",
         icon: Square,
         run: async () => {
-          if (!window.confirm("Stop all project processes?")) return;
+          const ok = await confirm({
+            title: "Stop all project processes?",
+            confirmLabel: "Stop all",
+            danger: true,
+          });
+          if (!ok) return;
           for (const project of projects) await stopProject(project.id);
         }
       },
@@ -140,8 +147,13 @@ export function CommandPalette() {
             description: "Stop every process in the selected project",
             section: "Current project",
             icon: Square,
-            run: () => {
-              if (window.confirm(`Stop all processes in ${selectedProject.name}?`)) return stopProject(selectedProject.id);
+            run: async () => {
+              const ok = await confirm({
+                title: `Stop all processes in ${selectedProject.name}?`,
+                confirmLabel: "Stop all",
+                danger: true,
+              });
+              if (ok) await stopProject(selectedProject.id);
             }
           },
           {

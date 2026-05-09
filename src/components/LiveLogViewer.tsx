@@ -25,6 +25,20 @@ export function LiveLogViewer({ logs, paused, liveTail, onPausedChange, onLiveTa
   const parentRef = useRef<HTMLDivElement | null>(null);
   const lastScrollTopRef = useRef(0);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    if (toastTimerRef.current != null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 1600);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current != null) window.clearTimeout(toastTimerRef.current);
+    };
+  }, []);
   const rows = useMemo(() => {
     const seen = new Set<string>();
     return logs
@@ -89,7 +103,22 @@ export function LiveLogViewer({ logs, paused, liveTail, onPausedChange, onLiveTa
       .slice(-200)
       .map((log) => `[${log.timestamp}] ${log.stream} ${log.level}: ${log.message}`)
       .join("\n");
-    await navigator.clipboard.writeText(text);
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("Copied last 200 lines");
+    } catch {
+      showToast("Copy failed");
+    }
+  };
+
+  const handleExport = async () => {
+    if (!onExport) return;
+    try {
+      await onExport();
+      showToast("Logs copied to clipboard");
+    } catch {
+      showToast("Export failed");
+    }
   };
 
   return (
@@ -109,7 +138,7 @@ export function LiveLogViewer({ logs, paused, liveTail, onPausedChange, onLiveTa
           <button type="button" onClick={copyVisible} title="Copy visible log block">
             <Copy size={16} />
           </button>
-          <button type="button" onClick={onExport} title="Export logs">
+          <button type="button" onClick={handleExport} title="Export logs">
             <Download size={16} />
           </button>
           <button type="button" onClick={onClear} title="Clear local log view">
@@ -142,6 +171,11 @@ export function LiveLogViewer({ logs, paused, liveTail, onPausedChange, onLiveTa
           <ArrowDown size={14} />
           Latest
         </button>
+      ) : null}
+      {toast ? (
+        <div className="copy-toast" role="status" aria-live="polite">
+          {toast}
+        </div>
       ) : null}
     </section>
   );

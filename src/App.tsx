@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { AppShell } from "./components/AppShell";
 import { CommandPalette } from "./components/CommandPalette";
+import { ConfirmProvider } from "./components/ConfirmDialog";
 import { DashboardOverview } from "./features/dashboard/DashboardOverview";
 import { LogsView } from "./features/logs/LogsView";
 import { ProcessDetailPanel } from "./features/processes/ProcessDetailPanel";
@@ -39,32 +40,34 @@ function App() {
   }[view];
 
   return (
-    <AppShell>
-      {!booted ? (
-        <main className="empty-state">
-          <Loader2 className="spin" size={24} />
-          <span>Loading local workspace</span>
-        </main>
-      ) : (
-        content
-      )}
+    <ConfirmProvider>
+      <AppShell>
+        {!booted ? (
+          <main className="empty-state">
+            <Loader2 className="spin" size={24} />
+            <span>Loading local workspace</span>
+          </main>
+        ) : (
+          content
+        )}
 
-      <CommandPalette />
+        <CommandPalette />
 
-      {currentAction ? (
-        <div className="action-toast">
-          <Loader2 className="spin" size={16} />
-          <span>{currentAction.label}</span>
-        </div>
-      ) : null}
+        {currentAction ? (
+          <div className="action-toast">
+            <Loader2 className="spin" size={16} />
+            <span>{currentAction.label}</span>
+          </div>
+        ) : null}
 
-      {lastError ? (
-        <div className="error-toast">
-          <AlertTriangle size={16} />
-          <span>{lastError}</span>
-        </div>
-      ) : null}
-    </AppShell>
+        {lastError ? (
+          <div className="error-toast">
+            <AlertTriangle size={16} />
+            <span>{lastError}</span>
+          </div>
+        ) : null}
+      </AppShell>
+    </ConfirmProvider>
   );
 }
 
