@@ -6,6 +6,7 @@ import type {
   AppConfig,
   AppSettings,
   DashboardSummary,
+  ExternalProcess,
   ID,
   LogEntry,
   LogFilters,
@@ -31,6 +32,7 @@ interface OrchestratorState {
   projects: Project[];
   processes: ProcessDefinition[];
   runtimeStates: Record<ID, ProcessRuntimeState>;
+  externalProcesses: Record<ID, ExternalProcess[]>;
   logs: LogEntry[];
   activity: ActivityEvent[];
   settings?: AppSettings;
@@ -62,6 +64,8 @@ interface OrchestratorState {
   stopProject: (projectId: ID) => Promise<void>;
   restartProject: (projectId: ID) => Promise<void>;
   restartFailed: (projectId?: ID) => Promise<void>;
+  loadExternalProcesses: (projectId: ID) => Promise<void>;
+  stopExternalProcess: (projectId: ID, processGroupId: number) => Promise<void>;
   runHealthCheck: (processId: ID) => Promise<void>;
   clearLogs: (projectId?: ID) => Promise<void>;
   applyMediaGuardPreset: (basePath?: string) => Promise<boolean>;
@@ -125,6 +129,7 @@ export const useOrchestratorStore = create<OrchestratorState>((set, get) => ({
   projects: [],
   processes: [],
   runtimeStates: {},
+  externalProcesses: {},
   logs: [],
   activity: [],
   projectFilters: defaultProjectFilters,
@@ -199,6 +204,7 @@ export const useOrchestratorStore = create<OrchestratorState>((set, get) => ({
         view: "project"
       }));
     });
+    void get().loadExternalProcesses(projectId);
   },
   selectProcess: (processId) => set({ selectedProcessId: processId, view: "process" }),
   createProject: async (input) => {
@@ -313,6 +319,21 @@ export const useOrchestratorStore = create<OrchestratorState>((set, get) => ({
       const runtimes = await api.restartFailedProcesses(projectId).then(unwrap);
       set((state) => ({ runtimeStates: { ...state.runtimeStates, ...mergeRuntime(runtimes) } }));
       await get().refreshDashboard();
+    });
+  },
+  loadExternalProcesses: async (projectId) => {
+    try {
+      const list = await api.listExternalProjectProcesses(projectId).then(unwrap);
+      set((state) => ({ externalProcesses: { ...state.externalProcesses, [projectId]: list } }));
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : String(error) });
+    }
+  },
+  stopExternalProcess: async (projectId, processGroupId) => {
+    await safeAction(set, { key: `stop-external:${processGroupId}`, label: "Stopping process" }, async () => {
+      await api.stopExternalProcess(processGroupId).then(unwrap);
+      const list = await api.listExternalProjectProcesses(projectId).then(unwrap);
+      set((state) => ({ externalProcesses: { ...state.externalProcesses, [projectId]: list } }));
     });
   },
   runHealthCheck: async (processId) => {

@@ -1,9 +1,10 @@
 use crate::{
     health,
     models::{
-        ApiError, ApiResponse, DashboardSummary, HealthStatus, Id, LogEntry, LogHistoryFilters,
-        LogLevel, PortBinding, ProcessDefinition, ProcessRuntimeState, ProcessStatus, Project,
-        ProjectDetail, ProjectStatus, RestartPolicyKind, RuntimeProcessRecord, StreamType,
+        ApiError, ApiResponse, DashboardSummary, ExternalProcess, HealthStatus, Id, LogEntry,
+        LogHistoryFilters, LogLevel, PortBinding, ProcessDefinition, ProcessRuntimeState,
+        ProcessStatus, Project, ProjectDetail, ProjectStatus, RestartPolicyKind,
+        RuntimeProcessRecord, StreamType,
     },
     state::AppState,
     storage,
@@ -828,6 +829,140 @@ pub async fn sync_external_processes(app: AppHandle, state: AppState) {
     if adopted {
         let _ = persist_runtime_processes(&app, &state).await;
     }
+}
+
+pub async fn list_external_project_processes(
+    state: AppState,
+    project_id: Id,
+) -> ApiResponse<Vec<ExternalProcess>> {
+    let project_root = {
+        let config = state.config.read().await;
+        match config
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)
+        {
+            Some(project) => project.root_path.clone(),
+            None => {
+                return ApiResponse::err(ApiError::new(
+                    "PROJECT_NOT_FOUND",
+                    "Project not found",
+                    false,
+                ))
+            }
+        }
+    };
+
+    let tracked_groups: HashSet<u32> = state
+        .runtime
+        .process_records
+        .read()
+        .await
+        .values()
+        .map(normalized_process_group_id)
+        .collect();
+
+    let rows = list_live_processes().await;
+    if rows.is_empty() {
+        return ApiResponse::ok(vec![]);
+    }
+
+    let cwds = list_all_process_cwds().await;
+    let self_pid = std::process::id();
+
+    let mut results = Vec::new();
+    let mut seen_groups: HashSet<u32> = HashSet::new();
+    for row in rows {
+        if row.pid == self_pid {
+            continue;
+        }
+        if tracked_groups.contains(&row.process_group_id) {
+            continue;
+        }
+        let Some(cwd) = cwds.get(&row.pid) else {
+            continue;
+        };
+        if !cwd_matches_root(cwd, &project_root) {
+            continue;
+        }
+        if !seen_groups.insert(row.process_group_id) {
+            continue;
+        }
+        results.push(ExternalProcess {
+            pid: row.pid,
+            process_group_id: row.process_group_id,
+            command: row.command.clone(),
+            cwd: cwd.clone(),
+        });
+    }
+    ApiResponse::ok(results)
+}
+
+pub async fn stop_external_process(
+    state: AppState,
+    process_group_id: u32,
+) -> ApiResponse<bool> {
+    let tracked = state
+        .runtime
+        .process_records
+        .read()
+        .await
+        .values()
+        .any(|record| normalized_process_group_id(record) == process_group_id);
+    if tracked {
+        return ApiResponse::err(ApiError::new(
+            "PROCESS_TRACKED",
+            "This process is managed by the orchestrator. Use the regular Stop button.",
+            false,
+        ));
+    }
+    if !process_group_exists(process_group_id) {
+        return ApiResponse::ok(true);
+    }
+
+    let stop_timeout_ms = state.config.read().await.settings.stop_timeout_ms;
+    if let Err(error) = signal_process_group(process_group_id, Signal::SIGTERM) {
+        return ApiResponse::err(ApiError::with_details(
+            "STOP_FAILED",
+            "Failed to signal process",
+            error.to_string(),
+            true,
+        ));
+    }
+    sleep(Duration::from_millis(stop_timeout_ms)).await;
+    if process_group_exists(process_group_id) {
+        let _ = force_kill_process_group(process_group_id);
+    }
+    ApiResponse::ok(true)
+}
+
+async fn list_all_process_cwds() -> HashMap<u32, String> {
+    let output = Command::new("lsof")
+        .arg("-d")
+        .arg("cwd")
+        .arg("-Fpn")
+        .stderr(Stdio::null())
+        .output()
+        .await;
+    let Ok(output) = output else {
+        return HashMap::new();
+    };
+    if output.stdout.is_empty() {
+        return HashMap::new();
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut result = HashMap::new();
+    let mut current_pid: Option<u32> = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix('p') {
+            current_pid = rest.trim().parse().ok();
+        } else if let Some(rest) = line.strip_prefix('n') {
+            if let Some(pid) = current_pid {
+                result.insert(pid, rest.to_string());
+            }
+        }
+    }
+    result
 }
 
 pub async fn shutdown_tracked_processes(app: AppHandle, state: AppState) {

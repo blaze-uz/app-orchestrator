@@ -102,6 +102,13 @@ export interface ProcessDefinition {
   updatedAt: string;
 }
 
+export interface ExternalProcess {
+  pid: number;
+  processGroupId: number;
+  command: string;
+  cwd: string;
+}
+
 export interface PortBinding {
   host: string;
   port: number;

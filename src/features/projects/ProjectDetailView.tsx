@@ -1,4 +1,4 @@
-import { Check, Copy, Edit3, FolderOpen, Play, Plus, RotateCcw, Square, Trash2, X } from "lucide-react";
+import { Check, Copy, Edit3, FolderOpen, Play, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { StatusBadge } from "../../components/StatusBadge";
@@ -10,7 +10,7 @@ import { ensureNotificationPermission } from "../../lib/notifications";
 import { isRuntimeBusy } from "../../lib/status";
 import { envToText, formatPath, formatRelativeTime, normalizeCliText, parseEnvInput, parseListInput } from "../../lib/time";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
-import type { ProcessDefinition, ProcessFormInput, ProcessRuntimeState } from "../../types/domain";
+import type { ExternalProcess, ProcessDefinition, ProcessFormInput, ProcessRuntimeState } from "../../types/domain";
 
 const technicalInputProps = {
   autoCapitalize: "off",
@@ -58,6 +58,9 @@ export function ProjectDetailView() {
   const restartProject = useOrchestratorStore((state) => state.restartProject);
   const settings = useOrchestratorStore((state) => state.settings);
   const updateSettings = useOrchestratorStore((state) => state.updateSettings);
+  const externalProcesses = useOrchestratorStore((state) => state.externalProcesses);
+  const loadExternalProcesses = useOrchestratorStore((state) => state.loadExternalProcesses);
+  const stopExternalProcess = useOrchestratorStore((state) => state.stopExternalProcess);
   const confirm = useConfirm();
   const [formOpen, setFormOpen] = useState(false);
   const [draft, setDraft] = useState<ProcessFormInput | null>(null);
@@ -68,6 +71,7 @@ export function ProjectDetailView() {
 
   const project = useMemo(() => projects.find((item) => item.id === selectedProjectId), [projects, selectedProjectId]);
   const projectProcesses = useMemo(() => processes.filter((process) => process.projectId === selectedProjectId), [processes, selectedProjectId]);
+  const projectExternals = selectedProjectId ? externalProcesses[selectedProjectId] ?? [] : [];
   const processStates = useMemo(
     () => projectProcesses.map((process) => runtimeStates[process.id]).filter((state): state is ProcessRuntimeState => Boolean(state)),
     [projectProcesses, runtimeStates]
@@ -424,6 +428,42 @@ export function ProjectDetailView() {
             </div>
           </SoloSection>
 
+          <SoloSection
+            title="Other processes in this project"
+            action={
+              <button
+                type="button"
+                onClick={() => void loadExternalProcesses(project.id)}
+                title="Refresh external process list"
+              >
+                <RefreshCw size={14} />
+                Refresh
+              </button>
+            }
+          >
+            <div className="solo-detail-card">
+              {projectExternals.length ? (
+                projectExternals.map((external) => (
+                  <ExternalProcessRow
+                    key={external.processGroupId}
+                    external={external}
+                    onStop={async () => {
+                      const ok = await confirm({
+                        title: `Stop process ${external.pid}?`,
+                        message: `This was started outside the app. Sends SIGTERM, then SIGKILL after the stop timeout.\n\n${external.command}`,
+                        confirmLabel: "Stop",
+                        danger: true,
+                      });
+                      if (ok) void stopExternalProcess(project.id, external.processGroupId);
+                    }}
+                  />
+                ))
+              ) : (
+                <p className="solo-empty-row">No untracked processes running in this project.</p>
+              )}
+            </div>
+          </SoloSection>
+
           <button
             className="solo-remove-project"
             type="button"
@@ -593,4 +633,24 @@ function SoloSwitch({ checked, onChange }: { checked: boolean; onChange: (checke
 
 function formatProcessCommand(process: ProcessDefinition) {
   return [process.command, ...process.args].filter(Boolean).join(" ") || process.key;
+}
+
+function ExternalProcessRow({ external, onStop }: { external: ExternalProcess; onStop: () => void }) {
+  return (
+    <div className="solo-command-row">
+      <span className="solo-command-main" style={{ cursor: "default" }}>
+        <RuntimeDot status="running" />
+        <span>
+          <strong>{external.command || `pid ${external.pid}`}</strong>
+          <small>{formatPath(external.cwd)}</small>
+        </span>
+      </span>
+      <span className="solo-command-meta">pid {external.pid}</span>
+      <span className="solo-command-actions">
+        <button type="button" onClick={onStop} title="Stop">
+          <Square size={14} />
+        </button>
+      </span>
+    </div>
+  );
 }

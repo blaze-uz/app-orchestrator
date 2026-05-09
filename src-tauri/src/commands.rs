@@ -487,6 +487,18 @@ pub async fn restart_project(
 }
 
 #[tauri::command]
+pub async fn list_external_project_processes(
+    project_id: Id,
+) -> ApiResponse<Vec<crate::models::ExternalProcess>> {
+    process_manager::list_external_project_processes(app_state(), project_id).await
+}
+
+#[tauri::command]
+pub async fn stop_external_process(process_group_id: u32) -> ApiResponse<bool> {
+    process_manager::stop_external_process(app_state(), process_group_id).await
+}
+
+#[tauri::command]
 pub async fn restart_failed_processes(
     app: AppHandle,
     project_id: Option<Id>,

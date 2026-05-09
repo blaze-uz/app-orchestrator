@@ -400,6 +400,14 @@ class MockApi {
     return this.ok(await this.getAllRuntimeStates().then((result) => result.data ?? []));
   }
 
+  listExternalProjectProcesses(_projectId: ID) {
+    return Promise.resolve(this.ok([]));
+  }
+
+  stopExternalProcess(_processGroupId: number) {
+    return Promise.resolve(this.ok(true));
+  }
+
   getRuntimeState(processId: ID) {
     return Promise.resolve(this.ok(this.runtime.get(processId) ?? this.defaultRuntime(processId)));
   }

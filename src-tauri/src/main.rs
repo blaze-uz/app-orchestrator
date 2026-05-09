@@ -93,6 +93,8 @@ pub fn run() {
             commands::stop_project,
             commands::restart_project,
             commands::restart_failed_processes,
+            commands::list_external_project_processes,
+            commands::stop_external_process,
             commands::get_runtime_state,
             commands::get_all_runtime_states,
             commands::get_log_history,

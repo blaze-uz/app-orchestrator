@@ -277,6 +277,15 @@ pub struct RuntimeProcessRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalProcess {
+    pub pid: u32,
+    pub process_group_id: u32,
+    pub command: String,
+    pub cwd: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StreamType {
     Stdout,
