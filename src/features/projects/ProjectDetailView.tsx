@@ -248,7 +248,7 @@ export function ProjectDetailView() {
               </button>
             </>
           )}
-          <span className="solo-running-pill">
+          <span className={`solo-running-pill ${runningCount > 0 ? "active" : "idle"}`}>
             <span />
             {runningCount}/{projectProcesses.length} Running
           </span>

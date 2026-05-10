@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, unwrap } from "../lib/api";
+import { api, ApiCallError, unwrap } from "../lib/api";
 import { deriveProjectStatus } from "../lib/status";
 import type {
   ActivityEvent,
@@ -25,6 +25,20 @@ interface ActionState {
   label: string;
 }
 
+export interface OrchestratorError {
+  message: string;
+  code?: string;
+  details?: string;
+  retryable?: boolean;
+}
+
+function toOrchestratorError(error: unknown): OrchestratorError {
+  if (error instanceof ApiCallError) {
+    return { message: error.message, code: error.code, details: error.details, retryable: error.retryable };
+  }
+  return { message: error instanceof Error ? error.message : String(error) };
+}
+
 interface OrchestratorState {
   booted: boolean;
   view: ViewKey;
@@ -43,7 +57,8 @@ interface OrchestratorState {
   logFilters: LogFilters;
   dashboard?: DashboardSummary;
   currentAction?: ActionState;
-  lastError?: string;
+  lastError?: OrchestratorError;
+  dismissError: () => void;
   initialize: () => Promise<void>;
   refreshAll: () => Promise<void>;
   refreshDashboard: () => Promise<void>;
@@ -115,7 +130,7 @@ async function safeAction<T>(set: (partial: Partial<OrchestratorState>) => void,
     set({ currentAction: action, lastError: undefined });
     return await task();
   } catch (error) {
-    set({ lastError: error instanceof Error ? error.message : String(error) });
+    set({ lastError: toOrchestratorError(error) });
     return undefined;
   } finally {
     set({ currentAction: undefined });
@@ -145,6 +160,7 @@ export const useOrchestratorStore = create<OrchestratorState>((set, get) => ({
       }));
     });
     const updateRuntime = (runtime: ProcessRuntimeState) => {
+      if (!runtime?.processId) return;
       set((state) => ({ runtimeStates: { ...state.runtimeStates, [runtime.processId]: runtime } }));
       void get().refreshDashboard();
     };
@@ -153,6 +169,7 @@ export const useOrchestratorStore = create<OrchestratorState>((set, get) => ({
     api.on<ProcessRuntimeState>("process_failed", updateRuntime);
     api.on<ProcessRuntimeState>("process_health_changed", updateRuntime);
     api.on<ProcessRuntimeState>("process_metrics_changed", (runtime) => {
+      if (!runtime?.processId) return;
       set((state) => ({ runtimeStates: { ...state.runtimeStates, [runtime.processId]: runtime } }));
     });
     await get().refreshAll();
@@ -326,9 +343,10 @@ export const useOrchestratorStore = create<OrchestratorState>((set, get) => ({
       const list = await api.listExternalProjectProcesses(projectId).then(unwrap);
       set((state) => ({ externalProcesses: { ...state.externalProcesses, [projectId]: list } }));
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : String(error) });
+      set({ lastError: toOrchestratorError(error) });
     }
   },
+  dismissError: () => set({ lastError: undefined }),
   stopExternalProcess: async (projectId, processGroupId) => {
     await safeAction(set, { key: `stop-external:${processGroupId}`, label: "Stopping process" }, async () => {
       await api.stopExternalProcess(processGroupId).then(unwrap);

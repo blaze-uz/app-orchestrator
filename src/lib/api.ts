@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  ApiError,
   ApiResponse,
   AppConfig,
   AppSettings,
@@ -87,9 +88,25 @@ export const api = {
   getDashboardSummary: () => command<DashboardSummary>("get_dashboard_summary")
 };
 
+export class ApiCallError extends Error {
+  readonly code: string;
+  readonly details?: string;
+  readonly retryable: boolean;
+
+  constructor(apiError: ApiError) {
+    super(apiError.message);
+    this.name = "ApiCallError";
+    this.code = apiError.code;
+    this.details = apiError.details;
+    this.retryable = apiError.retryable;
+  }
+}
+
 export function unwrap<T>(response: ApiResponse<T>): T {
   if (!response.success || response.data === undefined) {
-    throw new Error(response.error?.message ?? "Command failed");
+    throw new ApiCallError(
+      response.error ?? { code: "UNKNOWN_ERROR", message: "Command failed", retryable: false }
+    );
   }
   return response.data;
 }

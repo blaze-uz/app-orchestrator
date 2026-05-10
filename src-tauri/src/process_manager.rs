@@ -18,6 +18,7 @@ use nix::{
 };
 use std::{
     collections::{HashMap, HashSet},
+    env,
     io::{Error, ErrorKind},
     path::{Path, PathBuf},
     process::Stdio,
@@ -32,6 +33,14 @@ use tokio::{
 };
 
 const LOG_HISTORY_WINDOW_MINUTES: i64 = 5;
+const STANDARD_PROCESS_PATHS: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+];
 
 pub fn log_history_since() -> chrono::DateTime<Utc> {
     Utc::now() - ChronoDuration::minutes(LOG_HISTORY_WINDOW_MINUTES)
@@ -558,8 +567,17 @@ async fn stop_process_inner(
     let force_process = process.clone();
     let force_process_group_id = pid;
     tauri::async_runtime::spawn(async move {
-        sleep(Duration::from_millis(stop_timeout_ms)).await;
-        if process_group_exists(force_process_group_id) {
+        let poll_interval = Duration::from_millis(100);
+        let deadline = Instant::now() + Duration::from_millis(stop_timeout_ms);
+        let mut graceful_exit = false;
+        while Instant::now() < deadline {
+            if !process_group_exists(force_process_group_id) {
+                graceful_exit = true;
+                break;
+            }
+            sleep(poll_interval).await;
+        }
+        if !graceful_exit && process_group_exists(force_process_group_id) {
             append_log(
                 &force_app,
                 &force_state,
@@ -570,8 +588,8 @@ async fn stop_process_inner(
             )
             .await;
             let _ = force_kill_process_group(force_process_group_id);
+            sleep(Duration::from_millis(200)).await;
         }
-        sleep(Duration::from_millis(200)).await;
         if let Some(live_pid) = live_process_in_group(force_process_group_id).await {
             if update_tracked_process_pid(
                 &force_state,
@@ -898,10 +916,7 @@ pub async fn list_external_project_processes(
     ApiResponse::ok(results)
 }
 
-pub async fn stop_external_process(
-    state: AppState,
-    process_group_id: u32,
-) -> ApiResponse<bool> {
+pub async fn stop_external_process(state: AppState, process_group_id: u32) -> ApiResponse<bool> {
     let tracked = state
         .runtime
         .process_records
@@ -2261,7 +2276,7 @@ fn configure_process_command(
     // can be terminated together.
     command.process_group(0);
     command.current_dir(cwd);
-    command.envs(env);
+    command.envs(effective_process_env(env));
     command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2280,6 +2295,43 @@ fn configure_process_command(
             });
         }
     }
+}
+
+fn effective_process_env(process_env: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut env = process_env.clone();
+    if !env.contains_key("PATH") {
+        env.insert(
+            "PATH".to_string(),
+            default_process_path(env::var("PATH").ok(), env::var("HOME").ok()),
+        );
+    }
+    env
+}
+
+fn default_process_path(inherited_path: Option<String>, home_dir: Option<String>) -> String {
+    let mut paths = Vec::new();
+    if let Some(home_dir) = home_dir {
+        paths.push(format!("{home_dir}/Library/Application Support/Herd/bin"));
+    }
+    paths.extend(STANDARD_PROCESS_PATHS.iter().map(|path| path.to_string()));
+    if let Some(inherited_path) = inherited_path {
+        paths.extend(
+            inherited_path
+                .split(':')
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .map(str::to_string),
+        );
+    }
+    dedupe_paths(paths).join(":")
+}
+
+fn dedupe_paths(paths: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    paths
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
 }
 
 fn spawn_memory_monitor(
@@ -2893,6 +2945,72 @@ mod tests {
             &tokens(&["vite", "--host"]),
             "vite —host 127.0.0.1"
         ));
+    }
+
+    #[test]
+    fn default_process_path_includes_herd_bin_first() {
+        let path = default_process_path(
+            Some("/custom/bin:/usr/bin".to_string()),
+            Some("/Users/example".to_string()),
+        );
+        let entries: Vec<_> = path.split(':').collect();
+
+        assert_eq!(
+            entries.first().copied(),
+            Some("/Users/example/Library/Application Support/Herd/bin")
+        );
+        assert!(entries.contains(&"/opt/homebrew/bin"));
+        assert!(entries.contains(&"/usr/local/bin"));
+        assert!(entries.contains(&"/custom/bin"));
+    }
+
+    #[test]
+    fn default_process_path_deduplicates_entries() {
+        let path = default_process_path(
+            Some("/usr/local/bin:/opt/homebrew/bin:/custom/bin:/custom/bin".to_string()),
+            Some("/Users/example".to_string()),
+        );
+        let entries: Vec<_> = path.split(':').collect();
+
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| **entry == "/opt/homebrew/bin")
+                .count(),
+            1
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| **entry == "/custom/bin")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn effective_process_env_preserves_explicit_path() {
+        let mut process_env = HashMap::new();
+        process_env.insert("PATH".to_string(), "/custom/php/bin".to_string());
+        process_env.insert("APP_ENV".to_string(), "local".to_string());
+
+        let env = effective_process_env(&process_env);
+
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/custom/php/bin"));
+        assert_eq!(env.get("APP_ENV").map(String::as_str), Some("local"));
+    }
+
+    #[test]
+    fn effective_process_env_keeps_unrelated_vars() {
+        let mut process_env = HashMap::new();
+        process_env.insert("APP_ENV".to_string(), "local".to_string());
+
+        let env = effective_process_env(&process_env);
+
+        assert_eq!(env.get("APP_ENV").map(String::as_str), Some("local"));
+        assert!(env
+            .get("PATH")
+            .is_some_and(|path| path.contains("/Library/Application Support/Herd/bin")));
     }
 
     #[test]

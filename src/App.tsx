@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, Loader2, X } from "lucide-react";
 import { AppShell } from "./components/AppShell";
 import { CommandPalette } from "./components/CommandPalette";
 import { ConfirmProvider } from "./components/ConfirmDialog";
@@ -18,7 +18,18 @@ function App() {
   const view = useOrchestratorStore((state) => state.view);
   const currentAction = useOrchestratorStore((state) => state.currentAction);
   const lastError = useOrchestratorStore((state) => state.lastError);
+  const dismissError = useOrchestratorStore((state) => state.dismissError);
   const theme = useOrchestratorStore((state) => state.settings?.theme ?? "system");
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
+
+  useEffect(() => {
+    if (!lastError) {
+      setShowErrorDetails(false);
+      return;
+    }
+    const timer = window.setTimeout(() => dismissError(), 8000);
+    return () => window.clearTimeout(timer);
+  }, [lastError, dismissError]);
 
   useEffect(() => {
     void initialize();
@@ -61,9 +72,27 @@ function App() {
         ) : null}
 
         {lastError ? (
-          <div className="error-toast">
+          <div className="error-toast" role="alert">
             <AlertTriangle size={16} />
-            <span>{lastError}</span>
+            <div className="error-toast-body">
+              <div className="error-toast-headline">
+                {lastError.code ? <span className="error-toast-code">{lastError.code}</span> : null}
+                <span>{lastError.message}</span>
+              </div>
+              {lastError.details ? (
+                <button
+                  type="button"
+                  className="error-toast-toggle"
+                  onClick={() => setShowErrorDetails((prev) => !prev)}
+                >
+                  {showErrorDetails ? "Hide details" : "Show details"}
+                </button>
+              ) : null}
+              {showErrorDetails && lastError.details ? <pre className="error-toast-details">{lastError.details}</pre> : null}
+            </div>
+            <button type="button" className="error-toast-close" onClick={dismissError} title="Dismiss" aria-label="Dismiss error">
+              <X size={14} />
+            </button>
           </div>
         ) : null}
       </AppShell>

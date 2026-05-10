@@ -14,7 +14,7 @@ import {
 import { useEffect, useState } from "react";
 import { RuntimeDot } from "./RuntimeDot";
 import { formatMemory } from "../lib/memory";
-import { isRuntimeBusy } from "../lib/status";
+import { FAILED_STATUSES, isRuntimeBusy } from "../lib/status";
 import { formatRelativeTime } from "../lib/time";
 import { useOrchestratorStore } from "../stores/orchestratorStore";
 import type { ProcessDefinition, ProcessRuntimeState, Project, ViewKey } from "../types/domain";
@@ -131,8 +131,11 @@ export function SidebarProjects() {
 
       <button className="solo-project-row primary" type="button" onClick={() => (selectedProject ? handleProjectSelect(selectedProject.id) : selectView("projects"))}>
         {selectedProjectExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        <span className="solo-mark">{selectedProject?.name.slice(0, 2).toUpperCase() ?? "LO"}</span>
+        <span className="solo-mark" style={{ backgroundColor: selectedProject?.color || undefined }}>
+          {projectMark(selectedProject)}
+        </span>
         <strong>{selectedProject?.name ?? "App Orchestrator"}</strong>
+        {selectedProject ? <ProjectStatusBadges processes={selectedProcesses} runtimeStates={runtimeStates} /> : null}
         <small>{runningMeta(selectedProject, selectedProcesses, runtimeStates)}</small>
       </button>
 
@@ -247,8 +250,11 @@ function ProjectRow({
   return (
     <button className={`solo-project-row ${selected ? "active" : ""}`} type="button" onClick={onSelect}>
       {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-      <span className="solo-mark">{project.name.slice(0, 2).toUpperCase()}</span>
+      <span className="solo-mark" style={{ backgroundColor: project.color || undefined }}>
+        {projectMark(project)}
+      </span>
       <span>{project.name}</span>
+      <ProjectStatusBadges processes={processes} runtimeStates={runtimeStates} />
       <small>{projectMeta(project, processes, runtimeStates)}</small>
     </button>
   );
@@ -417,6 +423,40 @@ function groupProjectProcesses(projectProcesses: ProcessDefinition[]) {
 
 function isAgentProcess(process: ProcessDefinition) {
   return /(codex|claude|gemini|aider|amp|goose|agent)/i.test(`${process.name} ${process.key} ${process.command} ${process.group ?? ""}`);
+}
+
+function projectMark(project?: Project) {
+  if (!project) return "LO";
+  const source = (project.icon ?? project.name.slice(0, 2)).trim();
+  return (source || "??").slice(0, 4).toUpperCase();
+}
+
+function ProjectStatusBadges({
+  processes,
+  runtimeStates
+}: {
+  processes: ProcessDefinition[];
+  runtimeStates: Record<string, ProcessRuntimeState>;
+}) {
+  if (!processes.length) return null;
+  let running = 0;
+  let failed = 0;
+  let busy = 0;
+  for (const process of processes) {
+    const status = runtimeStates[process.id]?.currentStatus;
+    if (!status) continue;
+    if (status === "running") running += 1;
+    else if (FAILED_STATUSES.has(status)) failed += 1;
+    else if (isRuntimeBusy(status)) busy += 1;
+  }
+  if (!running && !failed && !busy) return null;
+  return (
+    <span className="solo-project-badges" aria-hidden="true">
+      {running > 0 ? <span className="solo-badge good" title={`${running} running`}>{running}</span> : null}
+      {failed > 0 ? <span className="solo-badge bad" title={`${failed} failed`}>{failed}</span> : null}
+      {busy > 0 ? <span className="solo-badge busy" title={`${busy} transitioning`}>{busy}</span> : null}
+    </span>
+  );
 }
 
 function projectMeta(project: Project, processes: ProcessDefinition[], runtimeStates: Record<string, ProcessRuntimeState>) {
