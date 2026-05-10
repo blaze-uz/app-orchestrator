@@ -603,6 +603,26 @@ pub async fn open_project_folder_in_finder(project_id: Id) -> ApiResponse<bool> 
 }
 
 #[tauri::command]
+pub async fn open_path_in_finder(path: String) -> ApiResponse<bool> {
+    if !std::path::Path::new(&path).is_absolute() {
+        return ApiResponse::err(ApiError::new(
+            "INVALID_PATH",
+            "Path must be absolute",
+            false,
+        ));
+    }
+    match Command::new("open").arg(&path).spawn() {
+        Ok(_) => ApiResponse::ok(true),
+        Err(error) => ApiResponse::err(ApiError::with_details(
+            "COMMAND_EXECUTION_FAILED",
+            "Unable to open path",
+            error,
+            true,
+        )),
+    }
+}
+
+#[tauri::command]
 pub async fn reveal_log_file_in_finder(app: AppHandle) -> ApiResponse<bool> {
     match storage::config_path(&app).and_then(|path| {
         Command::new("open")

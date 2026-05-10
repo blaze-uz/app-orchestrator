@@ -1021,6 +1021,13 @@ pub async fn find_process_on_port(port: u16) -> ApiResponse<Option<ExternalProce
                     process_group_id: g,
                     command: command.clone().unwrap_or_default(),
                     cwd,
+                    user: String::new(),
+                    started_at: String::new(),
+                    etime: String::new(),
+                    cpu_percent: 0.0,
+                    memory_kb: 0,
+                    ports: Vec::new(),
+                    children: Vec::new(),
                 });
                 break;
             }
@@ -1042,6 +1049,13 @@ pub async fn find_process_on_port(port: u16) -> ApiResponse<Option<ExternalProce
                 process_group_id: g,
                 command: command.unwrap_or_default(),
                 cwd,
+                user: String::new(),
+                started_at: String::new(),
+                etime: String::new(),
+                cpu_percent: 0.0,
+                memory_kb: 0,
+                ports: Vec::new(),
+                children: Vec::new(),
             });
         }
     }

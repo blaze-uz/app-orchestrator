@@ -467,6 +467,10 @@ class MockApi {
     return Promise.resolve(this.ok(true));
   }
 
+  openPathInFinder(_path: string) {
+    return Promise.resolve(this.ok(true));
+  }
+
   revealLogFileInFinder() {
     return Promise.resolve(this.ok(true));
   }

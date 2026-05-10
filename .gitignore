@@ -50,3 +50,9 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+
+# Claude Code local hook artifacts
+.claude/build-and-install.sh
+.claude/.needs-rebuild
+.claude/.build-running
+.claude/build.log

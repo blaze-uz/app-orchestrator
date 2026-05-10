@@ -77,6 +77,7 @@ export const api = {
   runHealthCheck: (processId: ID) => command<ProcessRuntimeState>("run_health_check", { processId }),
   getHealthSummary: (projectId?: ID) => command<{ healthy: number; unhealthy: number; unknown: number }>("get_health_summary", { projectId }),
   openProjectFolderInFinder: (projectId: ID) => command<boolean>("open_project_folder_in_finder", { projectId }),
+  openPathInFinder: (path: string) => command<boolean>("open_path_in_finder", { path }),
   revealLogFileInFinder: () => command<boolean>("reveal_log_file_in_finder"),
   validateProjectPath: (rootPath: string) => command<ValidationResult>("validate_project_path", { rootPath }),
   detectPortsInUse: () => command<Array<{ host: string; port: number; process?: string }>>("detect_ports_in_use"),

@@ -69,6 +69,7 @@ export function ProjectDetailView() {
   const [editingProjectName, setEditingProjectName] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState("");
   const [iconDraft, setIconDraft] = useState("");
+  const [externalDetailsKey, setExternalDetailsKey] = useState<number | null>(null);
 
   const project = useMemo(() => projects.find((item) => item.id === selectedProjectId), [projects, selectedProjectId]);
   const projectProcesses = useMemo(() => processes.filter((process) => process.projectId === selectedProjectId), [processes, selectedProjectId]);
@@ -519,6 +520,7 @@ export function ProjectDetailView() {
                   <ExternalProcessRow
                     key={external.processGroupId}
                     external={external}
+                    onOpen={() => setExternalDetailsKey(external.processGroupId)}
                     onStop={async () => {
                       const ok = await confirm({
                         title: `Stop process ${external.pid}?`,
@@ -535,6 +537,28 @@ export function ProjectDetailView() {
               )}
             </div>
           </SoloSection>
+          {(() => {
+            const open = projectExternals.find((p) => p.processGroupId === externalDetailsKey);
+            if (!open) return null;
+            return (
+              <ExternalProcessDetailsModal
+                external={open}
+                onClose={() => setExternalDetailsKey(null)}
+                onStop={async () => {
+                  const ok = await confirm({
+                    title: `Stop process ${open.pid}?`,
+                    message: `This was started outside the app. Sends SIGTERM, then SIGKILL after the stop timeout.\n\n${open.command}`,
+                    confirmLabel: "Stop",
+                    danger: true,
+                  });
+                  if (ok) {
+                    setExternalDetailsKey(null);
+                    void stopExternalProcess(project.id, open.processGroupId);
+                  }
+                }}
+              />
+            );
+          })()}
 
           <button
             className="solo-remove-project"
@@ -760,10 +784,30 @@ function PortConflictRow({
   );
 }
 
-function ExternalProcessRow({ external, onStop }: { external: ExternalProcess; onStop: () => void }) {
+function ExternalProcessRow({
+  external,
+  onOpen,
+  onStop,
+}: {
+  external: ExternalProcess;
+  onOpen: () => void;
+  onStop: () => void;
+}) {
   return (
-    <div className="solo-command-row">
-      <span className="solo-command-main" style={{ cursor: "default" }}>
+    <div
+      className="solo-command-row solo-command-row-clickable"
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+      title="Show full process details"
+    >
+      <span className="solo-command-main">
         <RuntimeDot status="running" />
         <span>
           <strong>{external.command || `pid ${external.pid}`}</strong>
@@ -772,10 +816,186 @@ function ExternalProcessRow({ external, onStop }: { external: ExternalProcess; o
       </span>
       <span className="solo-command-meta">pid {external.pid}</span>
       <span className="solo-command-actions">
-        <button type="button" onClick={onStop} title="Stop">
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onStop();
+          }}
+          title="Stop"
+        >
           <Square size={14} />
         </button>
       </span>
+    </div>
+  );
+}
+
+function ExternalProcessDetailsModal({
+  external,
+  onClose,
+  onStop,
+}: {
+  external: ExternalProcess;
+  onClose: () => void;
+  onStop: () => void;
+}) {
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 1500);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  const flash = (message: string) => setToast(message);
+
+  const copy = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      flash(`${label} copied`);
+    } catch {
+      flash("Copy failed");
+    }
+  };
+
+  const revealInFinder = async () => {
+    try {
+      await api.openPathInFinder(external.cwd);
+    } catch {
+      flash("Could not open in Finder");
+    }
+  };
+
+  const hasPorts = (external.ports?.length ?? 0) > 0;
+  const hasChildren = (external.children?.length ?? 0) > 0;
+  const memoryMb =
+    external.memoryKb && external.memoryKb > 0
+      ? `${(external.memoryKb / 1024).toFixed(1)} MB`
+      : "—";
+  const cpu =
+    typeof external.cpuPercent === "number" ? `${external.cpuPercent.toFixed(1)}%` : "—";
+
+  return (
+    <div
+      className="external-process-modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="external-process-modal-title"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="external-process-modal-panel">
+        <div className="external-process-modal-header">
+          <RuntimeDot status="running" />
+          <div className="external-process-modal-heading">
+            <h2 id="external-process-modal-title">
+              {external.command.split(/\s+/)[0] || `pid ${external.pid}`}
+            </h2>
+            <span className="external-process-modal-subtitle">pid {external.pid} · pgid {external.processGroupId}</span>
+          </div>
+          <button
+            type="button"
+            className="external-process-modal-close"
+            onClick={onClose}
+            title="Close"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="external-process-modal-body">
+          <section className="external-process-modal-section">
+            <h3>Process</h3>
+            <pre className="external-process-modal-command">{external.command || "—"}</pre>
+            <dl className="external-process-modal-grid">
+              <dt>User</dt>
+              <dd>{external.user || "—"}</dd>
+              <dt>Started</dt>
+              <dd>{external.startedAt || "—"}</dd>
+              <dt>Uptime</dt>
+              <dd>{external.etime || "—"}</dd>
+              <dt>CPU</dt>
+              <dd>{cpu}</dd>
+              <dt>Memory</dt>
+              <dd>{memoryMb}</dd>
+            </dl>
+          </section>
+
+          <section className="external-process-modal-section">
+            <h3>Network</h3>
+            {hasPorts ? (
+              <ul className="external-process-port-list">
+                {external.ports!.map((port) => (
+                  <li key={port} className="external-process-port-chip">{port}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="external-process-modal-empty">No listening TCP ports.</p>
+            )}
+          </section>
+
+          <section className="external-process-modal-section">
+            <h3>Working directory</h3>
+            <div className="external-process-modal-cwd-row">
+              <code className="external-process-modal-cwd">{external.cwd || "—"}</code>
+              <button type="button" onClick={revealInFinder} disabled={!external.cwd}>
+                <FolderOpen size={14} /> Reveal in Finder
+              </button>
+            </div>
+          </section>
+
+          {hasChildren && (
+            <section className="external-process-modal-section">
+              <h3>Process group ({external.children!.length + 1} processes)</h3>
+              <table className="external-process-children-table">
+                <thead>
+                  <tr>
+                    <th>PID</th>
+                    <th>Command</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {external.children!.map((child) => (
+                    <tr key={child.pid}>
+                      <td>{child.pid}</td>
+                      <td>{child.command || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+        </div>
+
+        <div className="external-process-modal-footer">
+          <button type="button" onClick={() => void copy(String(external.pid), "PID")}>
+            <Copy size={14} /> Copy PID
+          </button>
+          <button type="button" onClick={() => void copy(external.command, "Command")}>
+            <Copy size={14} /> Copy command
+          </button>
+          <button type="button" className="external-process-modal-stop" onClick={onStop}>
+            <Square size={14} /> Stop
+          </button>
+          <button type="button" onClick={onClose}>Close</button>
+        </div>
+
+        {toast && <div className="external-process-modal-toast">{toast}</div>}
+      </div>
     </div>
   );
 }

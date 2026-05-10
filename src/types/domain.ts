@@ -107,6 +107,18 @@ export interface ExternalProcess {
   processGroupId: number;
   command: string;
   cwd: string;
+  user?: string;
+  startedAt?: string;
+  etime?: string;
+  cpuPercent?: number;
+  memoryKb?: number;
+  ports?: number[];
+  children?: ExternalProcessChild[];
+}
+
+export interface ExternalProcessChild {
+  pid: number;
+  command: string;
 }
 
 export interface PortBinding {

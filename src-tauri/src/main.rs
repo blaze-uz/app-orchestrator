@@ -107,6 +107,7 @@ pub fn run() {
             commands::get_health_summary,
             commands::get_dashboard_summary,
             commands::open_project_folder_in_finder,
+            commands::open_path_in_finder,
             commands::reveal_log_file_in_finder,
             commands::validate_project_path,
             commands::detect_ports_in_use,
