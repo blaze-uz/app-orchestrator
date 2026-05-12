@@ -3,7 +3,7 @@ use crate::{
     models::{
         ApiError, ApiResponse, DashboardSummary, ExternalProcess, HealthStatus, Id, LogEntry,
         LogHistoryFilters, LogLevel, PortBinding, ProcessDefinition, ProcessRuntimeState,
-        ProcessStatus, Project, ProjectDetail, ProjectStatus, RestartPolicyKind,
+        ProcessStatus, Project, ProjectDetail, ProjectStatus, RestartPolicy, RestartPolicyKind,
         RuntimeProcessRecord, StreamType,
     },
     state::AppState,
@@ -222,6 +222,7 @@ async fn start_process_inner(
                         "{command_label}: {shell_error}. Direct launch also failed: {error}"
                     );
                     mark_spawn_failure(&app, &state, &process, &mut runtime, details.clone()).await;
+                    schedule_auto_restart_if_eligible(&app, &state, &process).await;
                     return Err(ApiError::with_details(
                         "COMMAND_EXECUTION_FAILED",
                         "Unable to execute process command",
@@ -234,6 +235,7 @@ async fn start_process_inner(
         Err(error) => {
             let details = format!("{command_label}: {error}");
             mark_spawn_failure(&app, &state, &process, &mut runtime, details.clone()).await;
+            schedule_auto_restart_if_eligible(&app, &state, &process).await;
             return Err(ApiError::with_details(
                 "COMMAND_EXECUTION_FAILED",
                 "Unable to execute process command",
@@ -439,8 +441,8 @@ async fn start_process_inner(
                     format!("Process crashed: {exit_status}"),
                 )
                 .await;
-                maybe_log_restart_policy(&wait_app, &wait_state, &wait_process, &runtime).await;
                 set_runtime(&wait_app, &wait_state, runtime, "process_failed").await;
+                schedule_auto_restart_if_eligible(&wait_app, &wait_state, &wait_process).await;
             }
             Err(error) => {
                 runtime.current_status = ProcessStatus::Failed;
@@ -455,6 +457,7 @@ async fn start_process_inner(
                 )
                 .await;
                 set_runtime(&wait_app, &wait_state, runtime, "process_failed").await;
+                schedule_auto_restart_if_eligible(&wait_app, &wait_state, &wait_process).await;
             }
         }
     });
@@ -3016,32 +3019,97 @@ fn visit_process(
     }
 }
 
-async fn maybe_log_restart_policy(
+fn retry_eligible(policy: &RestartPolicy, current_count: u32) -> bool {
+    match policy.kind {
+        RestartPolicyKind::Never => false,
+        RestartPolicyKind::Always | RestartPolicyKind::OnFailure => true,
+        RestartPolicyKind::LimitedRetries => policy
+            .max_retries
+            .map(|max| current_count < max)
+            .unwrap_or(true),
+    }
+}
+
+async fn schedule_auto_restart_if_eligible(
     app: &AppHandle,
     state: &AppState,
     process: &ProcessDefinition,
-    runtime: &ProcessRuntimeState,
 ) {
-    let retry = match process.restart_policy.kind {
-        RestartPolicyKind::Never => false,
-        RestartPolicyKind::Always | RestartPolicyKind::OnFailure => true,
-        RestartPolicyKind::LimitedRetries => process
-            .restart_policy
-            .max_retries
-            .map(|max| runtime.restart_count < max)
-            .unwrap_or(false),
-    };
-    if retry {
-        append_log(
-            app,
-            state,
-            process,
-            StreamType::System,
-            LogLevel::Warn,
-            "Restart policy is configured; manual restart is available in MVP runtime",
-        )
-        .await;
+    let policy = process.restart_policy.clone();
+    let current_count = state
+        .runtime
+        .states
+        .read()
+        .await
+        .get(&process.id)
+        .map(|r| r.restart_count)
+        .unwrap_or(0);
+
+    if !retry_eligible(&policy, current_count) {
+        if matches!(policy.kind, RestartPolicyKind::LimitedRetries) {
+            if let Some(max) = policy.max_retries {
+                append_log(
+                    app,
+                    state,
+                    process,
+                    StreamType::System,
+                    LogLevel::Warn,
+                    format!("Auto-restart limit reached ({max}); not retrying"),
+                )
+                .await;
+            }
+        }
+        return;
     }
+
+    let delay_ms = policy.retry_delay_ms.unwrap_or(3000);
+    append_log(
+        app,
+        state,
+        process,
+        StreamType::System,
+        LogLevel::Info,
+        format!(
+            "Auto-restart scheduled in {delay_ms}ms (attempt {})",
+            current_count + 1
+        ),
+    )
+    .await;
+
+    let app_handle = app.clone();
+    let state_handle = state.clone();
+    let process_id = process.id.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(delay_ms));
+        tauri::async_runtime::block_on(async move {
+            let status = state_handle
+                .runtime
+                .states
+                .read()
+                .await
+                .get(&process_id)
+                .map(|r| r.current_status.clone());
+            if !matches!(
+                status,
+                Some(ProcessStatus::Crashed | ProcessStatus::Failed)
+            ) {
+                return;
+            }
+
+            let updated_runtime = {
+                let mut states = state_handle.runtime.states.write().await;
+                states.get_mut(&process_id).map(|r| {
+                    r.restart_count += 1;
+                    r.clone()
+                })
+            };
+            if let Some(runtime) = updated_runtime {
+                set_runtime(&app_handle, &state_handle, runtime, "process_failed").await;
+            }
+
+            let _ = start_process_inner(app_handle, state_handle, process_id).await;
+        });
+    });
 }
 
 #[cfg(test)]
@@ -3171,6 +3239,64 @@ mod tests {
         assert!(!cwd_matches_root(
             "/tmp/app-orchestrator/project-api",
             "/tmp/app-orchestrator/project"
+        ));
+    }
+
+    fn policy(kind: RestartPolicyKind, max_retries: Option<u32>) -> RestartPolicy {
+        RestartPolicy {
+            kind,
+            max_retries,
+            retry_delay_ms: None,
+        }
+    }
+
+    #[test]
+    fn retry_eligible_never_policy_returns_false() {
+        assert!(!retry_eligible(&policy(RestartPolicyKind::Never, None), 0));
+        assert!(!retry_eligible(&policy(RestartPolicyKind::Never, Some(5)), 0));
+    }
+
+    #[test]
+    fn retry_eligible_on_failure_always_retries() {
+        assert!(retry_eligible(&policy(RestartPolicyKind::OnFailure, None), 0));
+        assert!(retry_eligible(&policy(RestartPolicyKind::OnFailure, None), 999));
+    }
+
+    #[test]
+    fn retry_eligible_always_policy_always_retries() {
+        assert!(retry_eligible(&policy(RestartPolicyKind::Always, None), 0));
+        assert!(retry_eligible(&policy(RestartPolicyKind::Always, None), 999));
+    }
+
+    #[test]
+    fn retry_eligible_limited_retries_respects_max() {
+        assert!(retry_eligible(
+            &policy(RestartPolicyKind::LimitedRetries, Some(3)),
+            0
+        ));
+        assert!(retry_eligible(
+            &policy(RestartPolicyKind::LimitedRetries, Some(3)),
+            2
+        ));
+        assert!(!retry_eligible(
+            &policy(RestartPolicyKind::LimitedRetries, Some(3)),
+            3
+        ));
+        assert!(!retry_eligible(
+            &policy(RestartPolicyKind::LimitedRetries, Some(3)),
+            10
+        ));
+    }
+
+    #[test]
+    fn retry_eligible_limited_retries_with_no_max_is_infinite() {
+        assert!(retry_eligible(
+            &policy(RestartPolicyKind::LimitedRetries, None),
+            0
+        ));
+        assert!(retry_eligible(
+            &policy(RestartPolicyKind::LimitedRetries, None),
+            10_000
         ));
     }
 }
