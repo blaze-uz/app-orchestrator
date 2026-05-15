@@ -26,10 +26,19 @@ if (process.platform === "darwin") {
 // On machines without the signing key (e.g. remote deploy targets like Zen),
 // skip the updater tarball that would otherwise fail to sign. The .app and
 // .dmg bundles still build normally; only the updater artifact is omitted.
+// `--bundles app dmg` alone isn't enough because `createUpdaterArtifacts:true`
+// in tauri.conf.json forces the updater tarball regardless, so we also pass
+// `--config` to override that field for this invocation only.
 const passthroughArgs = process.argv.slice(2);
 const hasBundleFlag = passthroughArgs.some((arg) => arg === "--bundles" || arg === "-b");
-if (!env.TAURI_SIGNING_PRIVATE_KEY && !hasBundleFlag) {
-  passthroughArgs.push("--bundles", "app", "dmg");
+const hasConfigFlag = passthroughArgs.some((arg) => arg === "--config" || arg === "-c");
+if (!env.TAURI_SIGNING_PRIVATE_KEY) {
+  if (!hasBundleFlag) {
+    passthroughArgs.push("--bundles", "app", "dmg");
+  }
+  if (!hasConfigFlag) {
+    passthroughArgs.push("--config", JSON.stringify({ bundle: { createUpdaterArtifacts: false } }));
+  }
 }
 
 const result = spawnSync("npm", ["run", "tauri", "--", "build", ...passthroughArgs], {
