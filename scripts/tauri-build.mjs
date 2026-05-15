@@ -23,7 +23,16 @@ if (process.platform === "darwin") {
   env.LC_CTYPE = "en_US.UTF-8";
 }
 
-const result = spawnSync("npm", ["run", "tauri", "--", "build", ...process.argv.slice(2)], {
+// On machines without the signing key (e.g. remote deploy targets like Zen),
+// skip the updater tarball that would otherwise fail to sign. The .app and
+// .dmg bundles still build normally; only the updater artifact is omitted.
+const passthroughArgs = process.argv.slice(2);
+const hasBundleFlag = passthroughArgs.some((arg) => arg === "--bundles" || arg === "-b");
+if (!env.TAURI_SIGNING_PRIVATE_KEY && !hasBundleFlag) {
+  passthroughArgs.push("--bundles", "app", "dmg");
+}
+
+const result = spawnSync("npm", ["run", "tauri", "--", "build", ...passthroughArgs], {
   env,
   stdio: "inherit"
 });
