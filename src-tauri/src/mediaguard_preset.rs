@@ -17,10 +17,11 @@ const PROJECT_INSTAGRAM: &str = "project_media_guard_instagram";
 const PROJECT_YOUTUBE: &str = "project_media_guard_youtube";
 const PROJECT_FACEBOOK: &str = "project_media_guard_facebook";
 const PROJECT_ANALYZER: &str = "project_media_guard_analizer";
+const PROJECT_ORCHESTRATOR: &str = "project_app_orchestrator";
 
 const OLD_WEB_PROJECT_ID: &str = "project_5d59221441524aadab582d075159b90d";
 
-const PROJECT_FOLDERS: [&str; 7] = [
+const PROJECT_FOLDERS: [&str; 8] = [
     "media-guard-web",
     "media-guard-collector-agent",
     "media-guard-telegram",
@@ -28,6 +29,7 @@ const PROJECT_FOLDERS: [&str; 7] = [
     "media-guard-youtube",
     "media-guard-facebook",
     "media-guard-analizer",
+    "app-orchestrator",
 ];
 
 pub fn default_base_path() -> String {
@@ -104,6 +106,7 @@ fn desired_project_ids() -> HashSet<&'static str> {
         PROJECT_YOUTUBE,
         PROJECT_FACEBOOK,
         PROJECT_ANALYZER,
+        PROJECT_ORCHESTRATOR,
     ]
     .into_iter()
     .collect()
@@ -112,25 +115,34 @@ fn desired_project_ids() -> HashSet<&'static str> {
 fn assign_machines_for_preset(config: &mut AppConfig) {
     let mars_id = find_machine_id_by_name(config, &["mars", "marss"]);
     let luna_id = find_machine_id_by_name(config, &["luna", "lunas"]);
-    if mars_id.is_none() && luna_id.is_none() {
+    let zen_id = find_machine_id_by_name(config, &["zen", "zenly"]);
+    if mars_id.is_none() && luna_id.is_none() && zen_id.is_none() {
         return;
     }
-    let target_for = |project_id: &str| -> Option<String> {
+    let process_target_for = |project_id: &str| -> Option<String> {
         match project_id {
             PROJECT_YOUTUBE => mars_id.clone(),
             PROJECT_TELEGRAM | PROJECT_FACEBOOK | PROJECT_INSTAGRAM => luna_id.clone(),
             _ => None,
         }
     };
+    let deploy_target_for = |project_id: &str| -> Option<String> {
+        match project_id {
+            PROJECT_YOUTUBE => mars_id.clone(),
+            PROJECT_TELEGRAM | PROJECT_FACEBOOK | PROJECT_INSTAGRAM => luna_id.clone(),
+            PROJECT_ORCHESTRATOR => zen_id.clone(),
+            _ => None,
+        }
+    };
     for process in &mut config.processes {
-        if let Some(target) = target_for(process.project_id.as_str()) {
+        if let Some(target) = process_target_for(process.project_id.as_str()) {
             if process.machine_id.is_none() {
                 process.machine_id = Some(target);
             }
         }
     }
     for script in &mut config.deploy_scripts {
-        if let Some(target) = target_for(script.project_id.as_str()) {
+        if let Some(target) = deploy_target_for(script.project_id.as_str()) {
             if script.machine_id.is_none() {
                 script.machine_id = Some(target);
             }
@@ -254,6 +266,19 @@ fn desired_projects(base_path: &str, old_projects: &[Project], now: DateTime<Utc
             "#8f7cff",
             vec!["python", "ai", "analizer"],
             70,
+            old_projects,
+            now,
+        ),
+        project(
+            PROJECT_ORCHESTRATOR,
+            "App Orchestrator",
+            "app-orchestrator",
+            "This Tauri desktop app. Deploy pulls + rebuilds + reinstalls on Zen.",
+            base_path,
+            "app-orchestrator",
+            "#a78bfa",
+            vec!["tauri", "rust", "react", "self"],
+            100,
             old_projects,
             now,
         ),
@@ -563,6 +588,12 @@ fn desired_deploy_scripts(
     // MediaGuard Analizer (Python venv)
     scripts.push(deploy_script("deploy_mg_analizer_pull", PROJECT_ANALYZER, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
     scripts.push(deploy_script("deploy_mg_analizer_pip", PROJECT_ANALYZER, "Pip install", DeployStage::Main, 1, "./.venv/bin/pip", vec!["install", "-r", "requirements.txt"], false, old_scripts, now));
+
+    // App Orchestrator (this Tauri app) — deployed to Zen via SSH
+    scripts.push(deploy_script("deploy_orchestrator_pull", PROJECT_ORCHESTRATOR, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_orchestrator_npm", PROJECT_ORCHESTRATOR, "NPM install", DeployStage::Main, 1, "npm", vec!["install"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_orchestrator_build", PROJECT_ORCHESTRATOR, "Build desktop", DeployStage::Main, 2, "npm", vec!["run", "desktop:build"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_orchestrator_install", PROJECT_ORCHESTRATOR, "Install desktop", DeployStage::Main, 3, "npm", vec!["run", "desktop:install"], false, old_scripts, now));
 
     scripts
 }
