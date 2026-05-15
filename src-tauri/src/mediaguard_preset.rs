@@ -1,5 +1,6 @@
 use crate::models::{
-    AppConfig, HealthCheck, LogMode, ProcessDefinition, Project, RestartPolicy, RestartPolicyKind,
+    AppConfig, DeployScript, DeployStage, HealthCheck, LogMode, ProcessDefinition, Project,
+    RestartPolicy, RestartPolicyKind,
 };
 use chrono::{DateTime, Utc};
 use std::{
@@ -45,6 +46,7 @@ pub fn apply(config: &mut AppConfig, base_path: Option<String>) {
 
     let old_projects = config.projects.clone();
     let old_processes = config.processes.clone();
+    let old_deploy_scripts = config.deploy_scripts.clone();
     let desired_project_ids = desired_project_ids();
     let removed_project_ids: HashSet<_> = old_projects
         .iter()
@@ -59,12 +61,18 @@ pub fn apply(config: &mut AppConfig, base_path: Option<String>) {
         !desired_project_ids.contains(process.project_id.as_str())
             && !removed_project_ids.contains(process.project_id.as_str())
     });
+    config.deploy_scripts.retain(|script| {
+        !desired_project_ids.contains(script.project_id.as_str())
+            && !removed_project_ids.contains(script.project_id.as_str())
+    });
 
     let projects = desired_projects(&base_path, &old_projects, now);
     let processes = desired_processes(&base_path, &old_projects, &old_processes, now);
+    let deploy_scripts = desired_deploy_scripts(&old_deploy_scripts, now);
 
     config.projects.extend(projects);
     config.processes.extend(processes);
+    config.deploy_scripts.extend(deploy_scripts);
     config.projects.sort_by_key(|project| project.startup_order);
 
     assign_machines_for_preset(config);
@@ -107,15 +115,24 @@ fn assign_machines_for_preset(config: &mut AppConfig) {
     if mars_id.is_none() && luna_id.is_none() {
         return;
     }
-    for process in &mut config.processes {
-        let target = match process.project_id.as_str() {
+    let target_for = |project_id: &str| -> Option<String> {
+        match project_id {
             PROJECT_YOUTUBE => mars_id.clone(),
             PROJECT_TELEGRAM | PROJECT_FACEBOOK | PROJECT_INSTAGRAM => luna_id.clone(),
             _ => None,
-        };
-        if let Some(target) = target {
+        }
+    };
+    for process in &mut config.processes {
+        if let Some(target) = target_for(process.project_id.as_str()) {
             if process.machine_id.is_none() {
                 process.machine_id = Some(target);
+            }
+        }
+    }
+    for script in &mut config.deploy_scripts {
+        if let Some(target) = target_for(script.project_id.as_str()) {
+            if script.machine_id.is_none() {
+                script.machine_id = Some(target);
             }
         }
     }
@@ -508,6 +525,81 @@ fn desired_processes(
             now,
         ),
     ]
+}
+
+fn desired_deploy_scripts(
+    old_scripts: &[DeployScript],
+    now: DateTime<Utc>,
+) -> Vec<DeployScript> {
+    let mut scripts = Vec::new();
+
+    // MediaGuard Web (Laravel + Vite)
+    scripts.push(deploy_script("deploy_mg_web_pull", PROJECT_WEB, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_web_composer", PROJECT_WEB, "Composer install", DeployStage::Main, 1, "composer", vec!["install", "--no-dev", "--optimize-autoloader", "--no-interaction"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_web_npm_install", PROJECT_WEB, "NPM install", DeployStage::Main, 2, "npm", vec!["install"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_web_npm_build", PROJECT_WEB, "NPM build", DeployStage::Main, 3, "npm", vec!["run", "build"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_web_migrate", PROJECT_WEB, "Laravel migrate", DeployStage::Main, 4, "php", vec!["artisan", "migrate", "--force"], false, old_scripts, now));
+
+    // MediaGuard Collector Agent (Python via run.sh)
+    scripts.push(deploy_script("deploy_mg_agent_pull", PROJECT_AGENT, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_agent_pip", PROJECT_AGENT, "Pip install", DeployStage::Main, 1, "./.venv/bin/pip", vec!["install", "-r", "requirements.txt"], true, old_scripts, now));
+
+    // MediaGuard Telegram (Go)
+    scripts.push(deploy_script("deploy_mg_telegram_pull", PROJECT_TELEGRAM, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_telegram_go_mod", PROJECT_TELEGRAM, "Go mod download", DeployStage::Main, 1, "go", vec!["mod", "download"], true, old_scripts, now));
+
+    // MediaGuard Instagram (Python venv)
+    scripts.push(deploy_script("deploy_mg_instagram_pull", PROJECT_INSTAGRAM, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_instagram_pip", PROJECT_INSTAGRAM, "Pip install", DeployStage::Main, 1, "./.venv/bin/pip", vec!["install", "-r", "requirements.txt"], false, old_scripts, now));
+
+    // MediaGuard YouTube (Node)
+    scripts.push(deploy_script("deploy_mg_youtube_pull", PROJECT_YOUTUBE, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_youtube_npm", PROJECT_YOUTUBE, "NPM install", DeployStage::Main, 1, "npm", vec!["install"], false, old_scripts, now));
+
+    // MediaGuard Facebook (Node)
+    scripts.push(deploy_script("deploy_mg_facebook_pull", PROJECT_FACEBOOK, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_facebook_npm", PROJECT_FACEBOOK, "NPM install", DeployStage::Main, 1, "npm", vec!["install"], false, old_scripts, now));
+
+    // MediaGuard Analizer (Python venv)
+    scripts.push(deploy_script("deploy_mg_analizer_pull", PROJECT_ANALYZER, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_analizer_pip", PROJECT_ANALYZER, "Pip install", DeployStage::Main, 1, "./.venv/bin/pip", vec!["install", "-r", "requirements.txt"], false, old_scripts, now));
+
+    scripts
+}
+
+#[allow(clippy::too_many_arguments)]
+fn deploy_script(
+    id: &str,
+    project_id: &str,
+    name: &str,
+    stage: DeployStage,
+    order: i32,
+    command: &str,
+    args: Vec<&str>,
+    continue_on_error: bool,
+    old_scripts: &[DeployScript],
+    now: DateTime<Utc>,
+) -> DeployScript {
+    let created_at = old_scripts
+        .iter()
+        .find(|script| script.id == id)
+        .map(|script| script.created_at)
+        .unwrap_or(now);
+    DeployScript {
+        id: id.to_string(),
+        project_id: project_id.to_string(),
+        name: name.to_string(),
+        stage,
+        order,
+        command: command.to_string(),
+        args: args.into_iter().map(str::to_string).collect(),
+        working_directory: None,
+        env: HashMap::new(),
+        machine_id: None,
+        continue_on_error,
+        created_at,
+        updated_at: now,
+    }
 }
 
 fn project(
