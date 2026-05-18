@@ -589,42 +589,55 @@ fn desired_deploy_scripts(
 ) -> Vec<DeployScript> {
     let mut scripts = Vec::new();
 
-    // MediaGuard Web (Laravel + Vite)
+    // MediaGuard Web (Laravel + Vite) — full production-style pipeline
     scripts.push(deploy_script("deploy_mg_web_pull", PROJECT_WEB, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
     scripts.push(deploy_script("deploy_mg_web_composer", PROJECT_WEB, "Composer install", DeployStage::Main, 1, "composer", vec!["install", "--no-dev", "--optimize-autoloader", "--no-interaction"], false, old_scripts, now));
     scripts.push(deploy_script("deploy_mg_web_npm_install", PROJECT_WEB, "NPM install", DeployStage::Main, 2, "npm", vec!["install"], false, old_scripts, now));
     scripts.push(deploy_script("deploy_mg_web_npm_build", PROJECT_WEB, "NPM build", DeployStage::Main, 3, "npm", vec!["run", "build"], false, old_scripts, now));
     scripts.push(deploy_script("deploy_mg_web_migrate", PROJECT_WEB, "Laravel migrate", DeployStage::Main, 4, "php", vec!["artisan", "migrate", "--force"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_web_optimize_clear", PROJECT_WEB, "Optimize clear", DeployStage::Main, 5, "php", vec!["artisan", "optimize:clear"], true, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_web_optimize", PROJECT_WEB, "Optimize (config+route+view cache)", DeployStage::Main, 6, "php", vec!["artisan", "optimize"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_web_event_cache", PROJECT_WEB, "Event cache", DeployStage::Main, 7, "php", vec!["artisan", "event:cache"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_web_storage_link", PROJECT_WEB, "Storage link", DeployStage::Main, 8, "php", vec!["artisan", "storage:link"], true, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_web_queue_restart", PROJECT_WEB, "Queue restart", DeployStage::Main, 9, "php", vec!["artisan", "queue:restart"], false, old_scripts, now));
 
-    // MediaGuard Collector Agent (Python via run.sh)
+    // MediaGuard Collector Agent (Python pyproject)
     scripts.push(deploy_script("deploy_mg_agent_pull", PROJECT_AGENT, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
-    scripts.push(deploy_script("deploy_mg_agent_pip", PROJECT_AGENT, "Pip install", DeployStage::Main, 1, "./.venv/bin/pip", vec!["install", "-r", "requirements.txt"], true, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_agent_pip", PROJECT_AGENT, "Pip install (editable)", DeployStage::Main, 1, "./.venv/bin/pip", vec!["install", "-e", "."], false, old_scripts, now));
 
-    // MediaGuard Telegram (Go)
+    // MediaGuard Telegram (Go + TDLib + embedded web)
     scripts.push(deploy_script("deploy_mg_telegram_pull", PROJECT_TELEGRAM, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
-    scripts.push(deploy_script("deploy_mg_telegram_go_mod", PROJECT_TELEGRAM, "Go mod download", DeployStage::Main, 1, "go", vec!["mod", "download"], true, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_telegram_tidy", PROJECT_TELEGRAM, "Go mod tidy", DeployStage::Main, 1, "make", vec!["tidy"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_telegram_web_install", PROJECT_TELEGRAM, "Web NPM install", DeployStage::Main, 2, "make", vec!["web-install"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_telegram_build", PROJECT_TELEGRAM, "Build (web + Go binary)", DeployStage::Main, 3, "make", vec!["build"], false, old_scripts, now));
 
-    // MediaGuard Instagram (Python venv)
+    // MediaGuard Instagram (Python pyproject)
     scripts.push(deploy_script("deploy_mg_instagram_pull", PROJECT_INSTAGRAM, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
-    scripts.push(deploy_script("deploy_mg_instagram_pip", PROJECT_INSTAGRAM, "Pip install", DeployStage::Main, 1, "./.venv/bin/pip", vec!["install", "-r", "requirements.txt"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_instagram_pip", PROJECT_INSTAGRAM, "Pip install (editable)", DeployStage::Main, 1, "./.venv/bin/pip", vec!["install", "-e", "."], false, old_scripts, now));
 
-    // MediaGuard YouTube (Node)
+    // MediaGuard YouTube (Node + Playwright + SQLite migrations + web UI)
     scripts.push(deploy_script("deploy_mg_youtube_pull", PROJECT_YOUTUBE, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
     scripts.push(deploy_script("deploy_mg_youtube_npm", PROJECT_YOUTUBE, "NPM install", DeployStage::Main, 1, "npm", vec!["install"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_youtube_db_migrate", PROJECT_YOUTUBE, "DB migrate", DeployStage::Main, 2, "npm", vec!["run", "db:migrate"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_youtube_web_build", PROJECT_YOUTUBE, "Web build", DeployStage::Main, 3, "npm", vec!["run", "web:build"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_youtube_playwright", PROJECT_YOUTUBE, "Playwright install", DeployStage::Main, 4, "npm", vec!["run", "playwright:install"], true, old_scripts, now));
 
-    // MediaGuard Facebook (Node)
+    // MediaGuard Facebook (Node + Playwright + SQLite migrations + web UI)
     scripts.push(deploy_script("deploy_mg_facebook_pull", PROJECT_FACEBOOK, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
     scripts.push(deploy_script("deploy_mg_facebook_npm", PROJECT_FACEBOOK, "NPM install", DeployStage::Main, 1, "npm", vec!["install"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_facebook_migrate", PROJECT_FACEBOOK, "Migrate", DeployStage::Main, 2, "npm", vec!["run", "migrate"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_facebook_web_build", PROJECT_FACEBOOK, "Web build", DeployStage::Main, 3, "npm", vec!["run", "web:build"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_facebook_playwright", PROJECT_FACEBOOK, "Playwright install", DeployStage::Main, 4, "npm", vec!["run", "playwright:install"], true, old_scripts, now));
 
-    // MediaGuard Analizer (Python venv)
+    // MediaGuard Analizer (Python pyproject)
     scripts.push(deploy_script("deploy_mg_analizer_pull", PROJECT_ANALYZER, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
-    scripts.push(deploy_script("deploy_mg_analizer_pip", PROJECT_ANALYZER, "Pip install", DeployStage::Main, 1, "./.venv/bin/pip", vec!["install", "-r", "requirements.txt"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_mg_analizer_pip", PROJECT_ANALYZER, "Pip install (editable)", DeployStage::Main, 1, "./.venv/bin/pip", vec!["install", "-e", "."], false, old_scripts, now));
 
-    // App Orchestrator (this Tauri app) — deployed to Zen via SSH
+    // App Orchestrator (this Tauri app) — deployed to Zen
     scripts.push(deploy_script("deploy_orchestrator_pull", PROJECT_ORCHESTRATOR, "Git pull", DeployStage::Main, 0, "git", vec!["pull", "--ff-only"], false, old_scripts, now));
     scripts.push(deploy_script("deploy_orchestrator_npm", PROJECT_ORCHESTRATOR, "NPM install", DeployStage::Main, 1, "npm", vec!["install"], false, old_scripts, now));
-    scripts.push(deploy_script("deploy_orchestrator_build", PROJECT_ORCHESTRATOR, "Build desktop", DeployStage::Main, 2, "npm", vec!["run", "desktop:build"], false, old_scripts, now));
-    scripts.push(deploy_script("deploy_orchestrator_install", PROJECT_ORCHESTRATOR, "Install desktop", DeployStage::Main, 3, "npm", vec!["run", "desktop:install"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_orchestrator_build", PROJECT_ORCHESTRATOR, "Tauri build", DeployStage::Main, 2, "npm", vec!["run", "desktop:build"], false, old_scripts, now));
+    scripts.push(deploy_script("deploy_orchestrator_install", PROJECT_ORCHESTRATOR, "Install desktop bundle", DeployStage::Main, 3, "npm", vec!["run", "desktop:install"], false, old_scripts, now));
 
     scripts
 }
