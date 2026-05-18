@@ -382,6 +382,7 @@ export interface DeployScriptResult {
 }
 
 export interface DeployRunState {
+  runId: ID;
   projectId: ID;
   status: DeployStatus;
   currentScriptId?: ID;
@@ -389,4 +390,16 @@ export interface DeployRunState {
   completedAt?: string;
   scriptResults: DeployScriptResult[];
   lastError?: string;
+}
+
+export interface DeployHistoryEntry {
+  runId: ID;
+  projectId: ID;
+  status: DeployStatus;
+  startedAt: string;
+  completedAt?: string;
+  scriptResults: DeployScriptResult[];
+  lastError?: string;
+  trigger?: string;
+  logs: LogEntry[];
 }

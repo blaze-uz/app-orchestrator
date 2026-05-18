@@ -2,10 +2,10 @@ use crate::{
     deploy,
     mediaguard_preset,
     models::{
-        ApiError, ApiResponse, AppConfig, AppSettings, DashboardSummary, DeployRunState,
-        DeployScript, DeployScriptFormInput, Id, Machine, MachineConnectionResult,
-        MachineFormInput, MetricSample, ProcessDefinition, ProcessFormInput, Project,
-        ProjectFormInput, ValidationResult, Workspace,
+        ApiError, ApiResponse, AppConfig, AppSettings, DashboardSummary, DeployHistoryEntry,
+        DeployRunState, DeployScript, DeployScriptFormInput, Id, Machine,
+        MachineConnectionResult, MachineFormInput, MetricSample, ProcessDefinition,
+        ProcessFormInput, Project, ProjectFormInput, ValidationResult, Workspace,
     },
     process_manager,
     state::{app_state, AppState},
@@ -1270,4 +1270,28 @@ pub async fn get_all_deploy_states() -> ApiResponse<Vec<DeployRunState>> {
     let state = app_state();
     let runs = deploy::all_states(&state).await;
     ApiResponse::ok(runs)
+}
+
+#[tauri::command]
+pub async fn list_deploy_history(
+    app: AppHandle,
+    project_id: Id,
+) -> ApiResponse<Vec<DeployHistoryEntry>> {
+    let mut entries: Vec<DeployHistoryEntry> = storage::load_deploy_history(&app)
+        .into_iter()
+        .filter(|entry| entry.project_id == project_id)
+        .collect();
+    entries.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    ApiResponse::ok(entries)
+}
+
+#[tauri::command]
+pub async fn get_deploy_history_entry(
+    app: AppHandle,
+    run_id: Id,
+) -> ApiResponse<Option<DeployHistoryEntry>> {
+    let entry = storage::load_deploy_history(&app)
+        .into_iter()
+        .find(|entry| entry.run_id == run_id);
+    ApiResponse::ok(entry)
 }

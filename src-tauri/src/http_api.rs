@@ -1,4 +1,4 @@
-use crate::models::{ApiResponse, Id, LogHistoryFilters, ProjectDetail};
+use crate::models::{ApiResponse, DeployHistoryEntry, Id, LogHistoryFilters, ProjectDetail};
 use crate::process_manager;
 use crate::state::AppState;
 use crate::storage;
@@ -126,6 +126,8 @@ fn build_router(state: HttpApiState) -> Router {
             post(restart_project_handler),
         )
         .route("/api/v1/logs", get(get_logs))
+        .route("/api/v1/projects/:id/deploys", get(list_deploys_handler))
+        .route("/api/v1/deploys/:run_id", get(get_deploy_handler))
         .route("/api/v1/health-summary", get(health_summary_handler))
         .route("/api/v1/dashboard", get(dashboard_handler))
         .layer(middleware::from_fn_with_state(
@@ -315,6 +317,28 @@ async fn get_logs(
     };
     let resp = process_manager::get_log_history(s.state.clone(), Some(filters)).await;
     into_response(resp)
+}
+
+async fn list_deploys_handler(
+    AxumState(s): AxumState<HttpApiState>,
+    Path(id): Path<Id>,
+) -> Response {
+    let mut entries: Vec<DeployHistoryEntry> = storage::load_deploy_history(&s.app)
+        .into_iter()
+        .filter(|entry| entry.project_id == id)
+        .collect();
+    entries.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    into_response(ApiResponse::ok(entries))
+}
+
+async fn get_deploy_handler(
+    AxumState(s): AxumState<HttpApiState>,
+    Path(run_id): Path<Id>,
+) -> Response {
+    let entry = storage::load_deploy_history(&s.app)
+        .into_iter()
+        .find(|entry| entry.run_id == run_id);
+    into_response(ApiResponse::ok(entry))
 }
 
 #[derive(Debug, Deserialize)]

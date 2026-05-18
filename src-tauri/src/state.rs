@@ -25,6 +25,8 @@ pub struct RuntimeRegistry {
     pub remote_pids: Arc<RwLock<HashMap<Id, u32>>>,
     pub deploy_states: Arc<RwLock<HashMap<Id, DeployRunState>>>,
     pub deploy_cancel: Arc<RwLock<HashMap<Id, watch::Sender<bool>>>>,
+    pub deploy_log_buffers: Arc<RwLock<HashMap<Id, Vec<LogEntry>>>>,
+    pub deploy_history_io: Arc<Mutex<()>>,
 }
 
 impl RuntimeRegistry {
@@ -62,6 +64,8 @@ impl RuntimeRegistry {
             remote_pids: Arc::new(RwLock::new(HashMap::new())),
             deploy_states: Arc::new(RwLock::new(HashMap::new())),
             deploy_cancel: Arc::new(RwLock::new(HashMap::new())),
+            deploy_log_buffers: Arc::new(RwLock::new(HashMap::new())),
+            deploy_history_io: Arc::new(Mutex::new(())),
         }
     }
 }

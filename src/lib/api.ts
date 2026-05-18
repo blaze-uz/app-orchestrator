@@ -6,6 +6,7 @@ import type {
   AppConfig,
   AppSettings,
   DashboardSummary,
+  DeployHistoryEntry,
   DeployRunState,
   DeployScript,
   DeployScriptFormInput,
@@ -120,7 +121,11 @@ export const api = {
   deployProject: (projectId: ID) => command<DeployRunState>("deploy_project", { projectId }),
   cancelDeploy: (projectId: ID) => command<DeployRunState>("cancel_deploy", { projectId }),
   getDeployState: (projectId: ID) => command<DeployRunState | null>("get_deploy_state", { projectId }),
-  getAllDeployStates: () => command<DeployRunState[]>("get_all_deploy_states")
+  getAllDeployStates: () => command<DeployRunState[]>("get_all_deploy_states"),
+  listDeployHistory: (projectId: ID) =>
+    command<DeployHistoryEntry[]>("list_deploy_history", { projectId }),
+  getDeployHistoryEntry: (runId: ID) =>
+    command<DeployHistoryEntry | null>("get_deploy_history_entry", { runId })
 };
 
 export class ApiCallError extends Error {

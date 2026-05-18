@@ -176,7 +176,9 @@ pub fn run() {
             commands::deploy_project,
             commands::cancel_deploy,
             commands::get_deploy_state,
-            commands::get_all_deploy_states
+            commands::get_all_deploy_states,
+            commands::list_deploy_history,
+            commands::get_deploy_history_entry
         ])
         .build(tauri::generate_context!())
         .expect("error while building App Orchestrator");

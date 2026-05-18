@@ -1,7 +1,8 @@
 use crate::{
     models::{
-        ApiError, DeployRunState, DeployScript, DeployScriptResult, DeployScriptStatus,
-        DeployStage, DeployStatus, Id, LogEntry, LogLevel, Machine, Project, StreamType,
+        ApiError, DeployHistoryEntry, DeployRunState, DeployScript, DeployScriptResult,
+        DeployScriptStatus, DeployStage, DeployStatus, Id, LogEntry, LogLevel, Machine, Project,
+        StreamType,
     },
     process_manager,
     ssh_executor,
@@ -23,6 +24,7 @@ use tokio::{
 };
 
 const DEPLOY_PROCESS_ID_PREFIX: &str = "deploy:";
+const DEPLOY_HISTORY_LIMIT: usize = 5;
 
 pub fn deploy_log_process_id(script_id: &str) -> String {
     format!("{DEPLOY_PROCESS_ID_PREFIX}{script_id}")
@@ -101,8 +103,17 @@ pub async fn start_deployment(
         .await
         .insert(project_id.clone(), cancel_tx);
 
+    let run_id = storage::id("dep");
+    state
+        .runtime
+        .deploy_log_buffers
+        .write()
+        .await
+        .insert(run_id.clone(), Vec::new());
+
     let now = Utc::now();
     let mut run = DeployRunState {
+        run_id: run_id.clone(),
         project_id: project_id.clone(),
         status: DeployStatus::Running,
         current_script_id: None,
@@ -146,6 +157,7 @@ pub async fn start_deployment(
             .write()
             .await
             .remove(&project_id_clone);
+        finalize_deploy_history(&app_clone, &state_clone, &run).await;
         persist_state(&app_clone, &state_clone, run).await;
     });
 
@@ -771,8 +783,59 @@ async fn emit_log(
             logs.pop_front();
         }
     }
+    let active_run_id = state
+        .runtime
+        .deploy_states
+        .read()
+        .await
+        .get(project_id)
+        .filter(|run| matches!(run.status, DeployStatus::Running) && !run.run_id.is_empty())
+        .map(|run| run.run_id.clone());
+    if let Some(run_id) = active_run_id {
+        let mut buffers = state.runtime.deploy_log_buffers.write().await;
+        if let Some(buffer) = buffers.get_mut(&run_id) {
+            buffer.push(entry.clone());
+        }
+    }
     if let Err(err) = app.emit("process_log", entry) {
         eprintln!("[deploy] emit process_log failed: {err}");
+    }
+}
+
+async fn finalize_deploy_history(app: &AppHandle, state: &AppState, run: &DeployRunState) {
+    if run.run_id.is_empty() {
+        return;
+    }
+    let logs = state
+        .runtime
+        .deploy_log_buffers
+        .write()
+        .await
+        .remove(&run.run_id)
+        .unwrap_or_default();
+    let Some(started_at) = run.started_at else {
+        return;
+    };
+    let entry = DeployHistoryEntry {
+        run_id: run.run_id.clone(),
+        project_id: run.project_id.clone(),
+        status: run.status,
+        started_at,
+        completed_at: run.completed_at,
+        script_results: run.script_results.clone(),
+        last_error: run.last_error.clone(),
+        trigger: None,
+        logs,
+    };
+    let _guard = state.runtime.deploy_history_io.lock().await;
+    if let Err(err) = storage::append_deploy_history(app, &entry) {
+        eprintln!("[deploy] append deploy history failed: {}", err.message);
+        return;
+    }
+    if let Err(err) =
+        storage::prune_deploy_history_for_project(app, &run.project_id, DEPLOY_HISTORY_LIMIT)
+    {
+        eprintln!("[deploy] prune deploy history failed: {}", err.message);
     }
 }
 

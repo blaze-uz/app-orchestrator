@@ -1,6 +1,6 @@
 use crate::models::{
-    ActivityEvent, ActivityType, ApiError, AppConfig, Id, LogEntry, Machine, RuntimeProcessRecord,
-    CURRENT_CONFIG_SCHEMA_VERSION, DEFAULT_LOCAL_MACHINE_ID,
+    ActivityEvent, ActivityType, ApiError, AppConfig, DeployHistoryEntry, Id, LogEntry, Machine,
+    RuntimeProcessRecord, CURRENT_CONFIG_SCHEMA_VERSION, DEFAULT_LOCAL_MACHINE_ID,
 };
 use chrono::{DateTime, Utc};
 use std::{
@@ -238,6 +238,165 @@ fn rewrite_log_history(
         ApiError::with_details(
             "CONFIG_WRITE_FAILED",
             "Unable to commit log history rewrite",
+            error,
+            true,
+        )
+    })
+}
+
+pub fn deploy_history_path(app: &AppHandle) -> Result<PathBuf, ApiError> {
+    let dir = app.path().app_config_dir().map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_PATH_UNAVAILABLE",
+            "Unable to resolve app config directory",
+            error,
+            false,
+        )
+    })?;
+    fs::create_dir_all(&dir).map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_PATH_UNAVAILABLE",
+            "Unable to create app config directory",
+            error,
+            false,
+        )
+    })?;
+    Ok(dir.join("deploy-history.jsonl"))
+}
+
+pub fn load_deploy_history(app: &AppHandle) -> Vec<DeployHistoryEntry> {
+    let Ok(path) = deploy_history_path(app) else {
+        return vec![];
+    };
+    let Ok(content) = fs::read_to_string(path) else {
+        return vec![];
+    };
+    content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<DeployHistoryEntry>(line).ok())
+        .collect()
+}
+
+pub fn append_deploy_history(
+    app: &AppHandle,
+    entry: &DeployHistoryEntry,
+) -> Result<(), ApiError> {
+    let path = deploy_history_path(app)?;
+    let line = serde_json::to_string(entry).map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_SERIALIZATION_FAILED",
+            "Unable to serialize deploy history entry",
+            error,
+            false,
+        )
+    })?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|error| {
+            ApiError::with_details(
+                "CONFIG_WRITE_FAILED",
+                "Unable to open deploy history",
+                error,
+                true,
+            )
+        })?;
+    writeln!(file, "{line}").map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_WRITE_FAILED",
+            "Unable to append deploy history",
+            error,
+            true,
+        )
+    })
+}
+
+pub fn prune_deploy_history_for_project(
+    app: &AppHandle,
+    project_id: &str,
+    keep_per_project: usize,
+) -> Result<(), ApiError> {
+    let path = deploy_history_path(app)?;
+    if !path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&path).map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_READ_FAILED",
+            "Unable to read deploy history",
+            error,
+            true,
+        )
+    })?;
+    let entries: Vec<DeployHistoryEntry> = content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<DeployHistoryEntry>(line).ok())
+        .collect();
+
+    let mut target_entries: Vec<&DeployHistoryEntry> = entries
+        .iter()
+        .filter(|entry| entry.project_id == project_id)
+        .collect();
+    if target_entries.len() <= keep_per_project {
+        return Ok(());
+    }
+    target_entries.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    let keep_ids: std::collections::HashSet<&str> = target_entries
+        .iter()
+        .take(keep_per_project)
+        .map(|entry| entry.run_id.as_str())
+        .collect();
+
+    let retained: Vec<&DeployHistoryEntry> = entries
+        .iter()
+        .filter(|entry| entry.project_id != project_id || keep_ids.contains(entry.run_id.as_str()))
+        .collect();
+
+    if retained.is_empty() {
+        fs::remove_file(&path).map_err(|error| {
+            ApiError::with_details(
+                "CONFIG_WRITE_FAILED",
+                "Unable to clear deploy history",
+                error,
+                true,
+            )
+        })?;
+        return Ok(());
+    }
+
+    let temp_path = path.with_extension("jsonl.tmp");
+    let mut file = fs::File::create(&temp_path).map_err(|error| {
+        ApiError::with_details(
+            "CONFIG_WRITE_FAILED",
+            "Unable to rewrite deploy history",
+            error,
+            true,
+        )
+    })?;
+    for entry in retained {
+        let line = serde_json::to_string(entry).map_err(|error| {
+            ApiError::with_details(
+                "CONFIG_SERIALIZATION_FAILED",
+                "Unable to serialize deploy history entry",
+                error,
+                false,
+            )
+        })?;
+        writeln!(file, "{line}").map_err(|error| {
+            ApiError::with_details(
+                "CONFIG_WRITE_FAILED",
+                "Unable to rewrite deploy history",
+                error,
+                true,
+            )
+        })?;
+    }
+    fs::rename(&temp_path, &path).map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        ApiError::with_details(
+            "CONFIG_WRITE_FAILED",
+            "Unable to commit deploy history rewrite",
             error,
             true,
         )

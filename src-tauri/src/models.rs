@@ -725,6 +725,8 @@ pub struct DeployScriptResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeployRunState {
+    #[serde(default)]
+    pub run_id: Id,
     pub project_id: Id,
     pub status: DeployStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -742,6 +744,7 @@ pub struct DeployRunState {
 impl DeployRunState {
     pub fn idle(project_id: impl Into<Id>) -> Self {
         Self {
+            run_id: String::new(),
             project_id: project_id.into(),
             status: DeployStatus::Idle,
             current_script_id: None,
@@ -751,6 +754,25 @@ impl DeployRunState {
             last_error: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeployHistoryEntry {
+    pub run_id: Id,
+    pub project_id: Id,
+    pub status: DeployStatus,
+    pub started_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub script_results: Vec<DeployScriptResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
+    #[serde(default)]
+    pub logs: Vec<LogEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
