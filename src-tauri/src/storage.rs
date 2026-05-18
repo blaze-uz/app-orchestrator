@@ -515,9 +515,27 @@ fn normalize_runtime_records(
 }
 
 pub fn migrate_config(mut config: AppConfig) -> AppConfig {
+    let previous_version = config.schema_version;
     config.schema_version = CURRENT_CONFIG_SCHEMA_VERSION;
     ensure_default_local_machine(&mut config);
+    if previous_version < 5 {
+        migrate_to_v5(&mut config);
+    }
     config
+}
+
+fn migrate_to_v5(config: &mut AppConfig) {
+    // Existing MediaGuard installs: enable auto-start so the new preset
+    // (project.auto_start = true) actually fires on launch. New installs
+    // already get this via AppSettings::default(), so this only flips the
+    // flag for users upgrading from schema v4.
+    let has_mediaguard_projects = config
+        .projects
+        .iter()
+        .any(|project| project.id.starts_with("project_media_guard_"));
+    if has_mediaguard_projects {
+        config.settings.auto_start_marked_projects = true;
+    }
 }
 
 pub fn ensure_default_local_machine(config: &mut AppConfig) {

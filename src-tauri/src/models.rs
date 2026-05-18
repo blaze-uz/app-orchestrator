@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub type Id = String;
-pub const CURRENT_CONFIG_SCHEMA_VERSION: u32 = 4;
+pub const CURRENT_CONFIG_SCHEMA_VERSION: u32 = 5;
 pub const DEFAULT_LOCAL_MACHINE_ID: &str = "machine_local";
 
 pub fn default_ssh_port() -> u16 {
@@ -443,7 +443,7 @@ impl Default for AppSettings {
         Self {
             theme: "dark".to_string(),
             launch_on_login: false,
-            auto_start_marked_projects: false,
+            auto_start_marked_projects: true,
             log_retention_lines: 5000,
             project_storage_path: None,
             notifications_enabled: false,
