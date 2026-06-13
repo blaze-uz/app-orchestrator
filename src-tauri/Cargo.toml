@@ -20,7 +20,7 @@ tauri-plugin-notification = "2.3.3"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2.10.1"
-thiserror = "1"
+thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 axum = "0.7"
