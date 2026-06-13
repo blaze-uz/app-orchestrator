@@ -1,0 +1,41 @@
+title: App Orchestrator
+description: >
+  macOS desktop control panel for orchestrating local + remote dev processes,
+  deploy pipelines, and SSH-driven multi-machine workflows.
+url: https://blaze-uz.github.io
+baseurl: /app-orchestrator
+repository: blaze-uz/app-orchestrator
+theme: jekyll-theme-cayman
+
+# SEO
+twitter:
+  card: summary_large_image
+social:
+  name: Blaze Uz
+  links:
+    - https://github.com/blaze-uz/app-orchestrator
+
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
+  - jekyll-relative-links
+
+# Use relative links so docs render in both GitHub and on Pages
+relative_links:
+  enabled: true
+  collections: true
+
+include:
+  - README.md
+
+# Don't expose CI/workflow noise
+exclude:
+  - .github
+  - node_modules
+  - src-tauri
+  - src
+  - scripts
+  - dist
+  - "*.lock"
+  - Gemfile
+  - Gemfile.lock

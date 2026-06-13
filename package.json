@@ -2,6 +2,35 @@
   "name": "app-orchestrator",
   "private": true,
   "version": "0.1.0",
+  "description": "macOS desktop control panel for orchestrating local + remote dev processes, deploy pipelines, and SSH-driven multi-machine workflows.",
+  "homepage": "https://github.com/blaze-uz/app-orchestrator#readme",
+  "bugs": {
+    "url": "https://github.com/blaze-uz/app-orchestrator/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/blaze-uz/app-orchestrator.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "macos",
+    "tauri",
+    "desktop-app",
+    "process-manager",
+    "process-orchestration",
+    "developer-tools",
+    "devops",
+    "deployment",
+    "ssh",
+    "dashboard",
+    "monitoring",
+    "supervisor",
+    "pm2-alternative",
+    "foreman-alternative",
+    "rust",
+    "react",
+    "vite"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
