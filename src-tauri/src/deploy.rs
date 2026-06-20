@@ -4,8 +4,7 @@ use crate::{
         DeployScriptStatus, DeployStage, DeployStatus, Id, LogEntry, LogLevel, Machine, Project,
         StreamType,
     },
-    process_manager,
-    ssh_executor,
+    platform, process_manager, ssh_executor,
     state::AppState,
     storage,
 };
@@ -687,7 +686,7 @@ async fn spawn_command(
 }
 
 fn configure_local_command(command: &mut Command, cwd: &str, env: &HashMap<String, String>) {
-    command.process_group(0);
+    platform::set_process_group(command);
     command.current_dir(cwd);
     command.envs(env);
     command
@@ -699,34 +698,19 @@ fn configure_local_command(command: &mut Command, cwd: &str, env: &HashMap<Strin
 fn effective_env(script: &DeployScript) -> HashMap<String, String> {
     let mut env = script.env.clone();
     if !env.contains_key("PATH") {
-        let mut paths: Vec<String> = vec![
-            "/opt/homebrew/bin".into(),
-            "/usr/local/bin".into(),
-            "/usr/bin".into(),
-            "/bin".into(),
-            "/usr/sbin".into(),
-            "/sbin".into(),
-        ];
-        if let Ok(home) = std::env::var("HOME") {
-            paths.insert(0, format!("{home}/Library/Application Support/Herd/bin"));
-        }
-        if let Ok(inherited) = std::env::var("PATH") {
-            for part in inherited.split(':') {
-                let trimmed = part.trim();
-                if !trimmed.is_empty() && !paths.iter().any(|existing| existing == trimmed) {
-                    paths.push(trimmed.to_string());
-                }
-            }
-        }
-        env.insert("PATH".into(), paths.join(":"));
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .ok();
+        env.insert(
+            "PATH".into(),
+            platform::default_process_path(std::env::var("PATH").ok(), home),
+        );
     }
     env
 }
 
 fn terminate_local_pid(pid: u32) {
-    use nix::sys::signal::{killpg, Signal};
-    use nix::unistd::Pid;
-    let _ = killpg(Pid::from_raw(pid as i32), Signal::SIGTERM);
+    let _ = platform::terminate_group(pid);
 }
 
 fn spawn_reader<R>(
@@ -1008,7 +992,13 @@ async fn notify_deploy_failure(app: &AppHandle, state: &AppState, entry: &Deploy
         (url, message)
     };
 
-    let mut cmd = Command::new("/usr/bin/curl");
+    // macOS keeps the guaranteed absolute path; Windows 10 1803+ ships
+    // System32\curl.exe, resolved from PATH.
+    #[cfg(unix)]
+    let curl = "/usr/bin/curl";
+    #[cfg(windows)]
+    let curl = "curl";
+    let mut cmd = Command::new(curl);
     cmd.arg("-s")
         .arg("--max-time")
         .arg("10")

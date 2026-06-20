@@ -82,6 +82,11 @@ To pause auto-deploy without deleting scripts, edit the project and toggle
 
 ## Self-deploy caveat
 
+This caveat applies to the **macOS** self-install flow (`desktop:install`). On
+Windows there is no in-place self-install step — rebuild with
+`npm run tauri:build` and run the generated `-setup.exe`, or let the bundled
+updater pull the next release.
+
 The orchestrator can be configured to deploy itself. The `git pull`, `npm
 install`, and `npm run desktop:build` steps all work. The `desktop:install`
 step quits the running orchestrator before copying the new `.app` — but since

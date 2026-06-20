@@ -7,6 +7,7 @@ import { RuntimeDot } from "../../components/RuntimeDot";
 import { api } from "../../lib/api";
 import { formatMemory, formatMemoryLimit, normalizeMemoryLimitMb, parseMemoryLimitInput } from "../../lib/memory";
 import { ensureNotificationPermission } from "../../lib/notifications";
+import { fileManagerName, revealLabel } from "../../lib/platform";
 import { isRuntimeBusy } from "../../lib/status";
 import { envToText, formatPath, formatRelativeTime, normalizeCliText, parseEnvInput, parseListInput } from "../../lib/time";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
@@ -469,7 +470,7 @@ export function ProjectDetailView() {
                       value={draft.machineId ?? ""}
                       onChange={(event) => setDraft({ ...draft, machineId: event.target.value || undefined })}
                     >
-                      <option value="">{machines.find((machine) => machine.isDefaultLocal)?.name ?? "This Mac"} (local)</option>
+                      <option value="">{machines.find((machine) => machine.isDefaultLocal)?.name ?? "Local"} (local)</option>
                       {machines.filter((machine) => !machine.isDefaultLocal).map((machine) => (
                         <option key={machine.id} value={machine.id}>
                           {machine.name} ({machine.sshUser}@{machine.hostname})
@@ -902,7 +903,7 @@ function ExternalProcessDetailsModal({
     try {
       await api.openPathInFinder(external.cwd);
     } catch {
-      flash("Could not open in Finder");
+      flash(`Could not open in ${fileManagerName}`);
     }
   };
 
@@ -984,7 +985,7 @@ function ExternalProcessDetailsModal({
             <div className="external-process-modal-cwd-row">
               <code className="external-process-modal-cwd">{external.cwd || "—"}</code>
               <button type="button" onClick={revealInFinder} disabled={!external.cwd}>
-                <FolderOpen size={14} /> Reveal in Finder
+                <FolderOpen size={14} /> {revealLabel}
               </button>
             </div>
           </section>

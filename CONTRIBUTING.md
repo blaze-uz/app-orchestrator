@@ -5,18 +5,40 @@ the dev loop, and what to change if you fork the project to ship your own builds
 
 ## Local setup
 
-Prerequisites:
+Karvon is a cross-platform desktop app — it builds and runs on **macOS and
+Windows** from the same source.
 
-- macOS (this is a macOS-only desktop app)
+Common prerequisites:
+
 - Node.js LTS and npm
-- Rust stable + Cargo (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
-- Xcode Command Line Tools
+- Rust stable + Cargo (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`,
+  or [rustup-init.exe](https://rustup.rs) on Windows)
+
+Platform-specific:
+
+- **macOS** — Xcode Command Line Tools.
+- **Windows** — the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-studio-build-tools/)
+  with the *Desktop development with C++* workload (provides the MSVC linker that
+  Rust's `x86_64-pc-windows-msvc` toolchain needs). WebView2 ships with Windows 11
+  and recent Windows 10. The OpenSSH client (default on Windows 10 1809+) is
+  needed to exercise remote machines and deploys.
 
 ```bash
 npm install
 npm run tauri:dev    # full Tauri app (Rust + React)
 npm run dev          # frontend only, with a mock runtime in the browser
 ```
+
+### Platform abstraction
+
+OS-specific process supervision lives behind one module, `src-tauri/src/platform/`:
+`unix.rs` keeps the original POSIX behaviour (`nix` process groups, `ps`/`lsof`),
+and `windows.rs` provides the Windows mapping (`CREATE_NEW_PROCESS_GROUP`,
+`taskkill /T`, `netstat`/`tasklist`). The rest of the backend calls the
+platform-neutral functions in `platform/mod.rs`. The Windows text parsers are
+unit-tested on every CI runner (including macOS) so they can be verified without
+a Windows machine. When touching process spawning, termination, or discovery,
+add the behaviour to **both** impls and keep the function signature identical.
 
 The browser-only mode at <http://127.0.0.1:1420> uses a mock adapter so you can
 iterate on the UI without launching native processes.
@@ -32,6 +54,7 @@ iterate on the UI without launching native processes.
 | `src-tauri/src/commands.rs` | Tauri command handlers |
 | `src-tauri/src/http_api.rs` | Optional HTTP API |
 | `src-tauri/src/process_manager.rs` | Local process lifecycle |
+| `src-tauri/src/platform/` | OS-specific process supervision (`unix.rs` / `windows.rs`) |
 | `src-tauri/src/deploy.rs` | Deploy pipeline runner |
 | `src-tauri/src/ssh_executor.rs` | Remote command execution |
 | `docs/ARCHITECTURE.md` | High-level architecture |
@@ -39,13 +62,22 @@ iterate on the UI without launching native processes.
 ## Build & install locally
 
 ```bash
-npm run desktop:build      # produces a signed .app + .dmg in src-tauri/target/release/bundle
-npm run desktop:install    # copies the .app to /Applications and reopens it
+npm run tauri:build        # platform-native bundle in src-tauri/target/release/bundle
 ```
 
-`desktop:build` looks for a minisign signing key at `~/.tauri/karvon.key`.
-If the file is absent, the build silently skips the updater tarball so the .app
-and .dmg still produce.
+On **macOS** this produces a signed `.app` + `.dmg`; on **Windows** an NSIS
+`-setup.exe` + `.msi` under `bundle/nsis` and `bundle/msi`. `tauri:build` looks
+for a minisign signing key at `~/.tauri/karvon.key`; if absent, it skips the
+updater artifact so the installers still produce.
+
+macOS also has convenience scripts:
+
+```bash
+npm run desktop:install    # build, copy the .app to /Applications, and reopen it
+npm run desktop:open       # launch the installed/built .app
+```
+
+These two are macOS-only; on Windows, run the generated `-setup.exe`.
 
 ## Forking the project
 

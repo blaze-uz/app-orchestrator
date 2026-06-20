@@ -7,24 +7,30 @@ The most common problems, with the fixes that have actually worked.
 You enabled the API on a port something else holds. Either:
 
 - Pick a different port in **Settings → Config → HTTP API**, or
-- Find and kill the holder: `lsof -i :8765` and `kill <pid>`.
+- Find and kill the holder: `lsof -i :8765` and `kill <pid>` (macOS), or
+  `netstat -ano | findstr :8765` and `taskkill /PID <pid> /F` (Windows).
 
 ## A process won't start — "Command not found"
 
-The orchestrator runs commands with a *clean* PATH. By default it includes
-`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`,
-`/sbin`, and `$HOME/Library/Application Support/Herd/bin` (for Laravel Herd
-users). Anything else needs to be added explicitly.
+The orchestrator runs commands with a *clean* PATH.
 
-Fix it one of two ways:
+- **macOS** — it includes `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`,
+  `/bin`, `/usr/sbin`, `/sbin`, and `$HOME/Library/Application Support/Herd/bin`
+  (for Laravel Herd users), then the inherited PATH.
+- **Windows** — it includes `%LOCALAPPDATA%\Herd\bin` then the inherited `%PATH%`
+  (which already resolves `System32` and installed tooling).
 
-- Set the full path in the command: `/opt/homebrew/bin/php` instead of `php`.
-- Add `PATH=/your/custom/path:$PATH` to the process's env.
+Anything else needs to be added explicitly. Fix it one of two ways:
+
+- Set the full path in the command (`/opt/homebrew/bin/php`, or
+  `C:\php\php.exe` on Windows) instead of a bare name.
+- Add a `PATH` entry to the process's env (use `;` as the separator on Windows).
 
 ## "Direct launch failed" then "shell fallback failed"
 
-The orchestrator tried to `execvp` the command, got `ENOENT`, fell back to
-`/bin/zsh -lc 'exec <command>'`, and that failed too. Causes:
+The orchestrator tried to launch the command directly, got "not found", fell
+back to the OS shell (`/bin/zsh -lc 'exec <command>'` on macOS,
+`cmd /C <command>` on Windows), and that failed too. Causes:
 
 - Misspelled command.
 - A `~`/`$HOME` in the command itself — the direct launch path doesn't expand
@@ -89,7 +95,10 @@ roadmap item or contribute one.
 ## Where's the config file?
 
 ```
+# macOS
 ~/Library/Application Support/uz.blaze.karvon/config.json
+# Windows
+%APPDATA%\uz.blaze.karvon\config.json
 ```
 
 Backups land in the same directory with timestamps. Deploy history is
@@ -97,15 +106,41 @@ Backups land in the same directory with timestamps. Deploy history is
 
 ## How do I reset everything?
 
-Quit the app, then:
+Quit the app, then move the config aside:
 
 ```bash
+# macOS
 mv "$HOME/Library/Application Support/uz.blaze.karvon/config.json" \
    "$HOME/Library/Application Support/uz.blaze.karvon/config.json.before-reset"
 ```
 
+```powershell
+# Windows (PowerShell)
+Move-Item "$env:APPDATA\uz.blaze.karvon\config.json" `
+          "$env:APPDATA\uz.blaze.karvon\config.json.before-reset"
+```
+
 Reopen the app and it'll write a fresh default config. The old file is right
 next to it if you want to inspect or partially restore.
+
+## Windows-specific behaviour
+
+Karvon runs natively on Windows, with a few intentional differences from macOS:
+
+- **Process termination is not graceful.** Stopping a process force-kills its
+  tree via `taskkill /T` — there is no Windows equivalent of "send SIGTERM, wait,
+  then SIGKILL". The configured stop timeout still applies, but long-running
+  children get no cleanup window.
+- **Memory limits are not enforced.** The per-process memory *limit* (a POSIX
+  `RLIMIT_AS` cap) has no cheap Windows equivalent, so it is ignored. The live
+  memory *display* and the project-level memory monitor still work.
+- **External-process matching is by image name.** The "adopt an
+  externally-started process" feature can read a process's command line and
+  working directory on macOS (via `lsof`); on Windows it matches on the
+  executable name only.
+- **Remote machines require the OpenSSH client.** Windows 10 1809+ ships it by
+  default; otherwise enable it under *Settings → Apps → Optional features →
+  OpenSSH Client*. Remote deploy *targets* must be macOS/Linux hosts.
 
 ## I want to file a bug
 
@@ -113,7 +148,7 @@ Open an [issue](https://github.com/blaze-uz/karvon/issues/new/choose).
 Include:
 
 - Karvon version (Settings → About).
-- macOS version.
+- OS and version (macOS or Windows).
 - The relevant entry from the deploy history (Settings → Activity for a
   recent timestamped event ID) or a redacted log snippet.
 - For HTTP API issues: the exact `curl` invocation with the token redacted.

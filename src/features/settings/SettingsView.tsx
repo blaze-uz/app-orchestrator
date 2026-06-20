@@ -6,6 +6,7 @@ import { api } from "../../lib/api";
 import { getLaunchOnLoginEnabled, setLaunchOnLoginEnabled } from "../../lib/autostart";
 import { selectFolder } from "../../lib/folderPicker";
 import { ensureNotificationPermission } from "../../lib/notifications";
+import { osName } from "../../lib/platform";
 import { useOrchestratorStore } from "../../stores/orchestratorStore";
 import type { ActivityEvent, AppConfig, AppSettings } from "../../types/domain";
 
@@ -190,7 +191,7 @@ export function SettingsView() {
         {activeTab === "automation" ? (
           <SettingsTabPanel>
             <SettingsGroup label="Application">
-              <SettingsRow title="Launch app on login" detail="Open the orchestrator when macOS starts">
+              <SettingsRow title="Launch app on login" detail={`Open the orchestrator when ${osName} starts`}>
                 <Switch checked={settings.launchOnLogin} onChange={toggleLaunchOnLogin} />
               </SettingsRow>
               <SettingsRow title="Start marked projects" detail="Auto-start projects marked for launch">

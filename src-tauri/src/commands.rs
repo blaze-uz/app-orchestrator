@@ -6,12 +6,12 @@ use crate::{
         MachineConnectionResult, MachineFormInput, MetricSample, ProcessDefinition,
         ProcessFormInput, Project, ProjectFormInput, ValidationResult, Workspace,
     },
-    process_manager,
+    platform, process_manager,
     state::{app_state, AppState},
     storage,
 };
 use chrono::Utc;
-use std::{collections::HashSet, path::Path, process::Command};
+use std::{collections::HashSet, path::Path};
 use tauri::AppHandle;
 
 #[tauri::command]
@@ -743,7 +743,7 @@ pub async fn open_project_folder_in_finder(project_id: Id) -> ApiResponse<bool> 
             false,
         ));
     };
-    match Command::new("open").arg(&project.root_path).spawn() {
+    match platform::open_path(Path::new(&project.root_path)) {
         Ok(_) => ApiResponse::ok(true),
         Err(error) => ApiResponse::err(ApiError::with_details(
             "COMMAND_EXECUTION_FAILED",
@@ -763,7 +763,7 @@ pub async fn open_path_in_finder(path: String) -> ApiResponse<bool> {
             false,
         ));
     }
-    match Command::new("open").arg(&path).spawn() {
+    match platform::open_path(Path::new(&path)) {
         Ok(_) => ApiResponse::ok(true),
         Err(error) => ApiResponse::err(ApiError::with_details(
             "COMMAND_EXECUTION_FAILED",
@@ -777,19 +777,14 @@ pub async fn open_path_in_finder(path: String) -> ApiResponse<bool> {
 #[tauri::command]
 pub async fn reveal_log_file_in_finder(app: AppHandle) -> ApiResponse<bool> {
     match storage::config_path(&app).and_then(|path| {
-        Command::new("open")
-            .arg("-R")
-            .arg(path)
-            .spawn()
-            .map(|_| ())
-            .map_err(|error| {
-                ApiError::with_details(
-                    "COMMAND_EXECUTION_FAILED",
-                    "Unable to reveal config file",
-                    error,
-                    true,
-                )
-            })
+        platform::reveal_path(&path).map_err(|error| {
+            ApiError::with_details(
+                "COMMAND_EXECUTION_FAILED",
+                "Unable to reveal config file",
+                error,
+                true,
+            )
+        })
     }) {
         Ok(_) => ApiResponse::ok(true),
         Err(error) => ApiResponse::err(error),

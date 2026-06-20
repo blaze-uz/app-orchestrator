@@ -8,8 +8,12 @@ on:
 
 jobs:
   frontend:
-    name: Frontend (tsc + build)
-    runs-on: macos-latest
+    name: Frontend (tsc + build) — ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,8 +25,12 @@ jobs:
       - run: npm run build
 
   backend:
-    name: Backend (cargo check + test)
-    runs-on: macos-latest
+    name: Backend (cargo check + test) — ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

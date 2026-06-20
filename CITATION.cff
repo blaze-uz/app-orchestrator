@@ -9,6 +9,8 @@ repository-code: "https://github.com/blaze-uz/karvon"
 license: MIT
 keywords:
   - macos
+  - windows
+  - cross-platform
   - tauri
   - process-manager
   - developer-tools
@@ -16,6 +18,6 @@ keywords:
   - ssh
   - deployment
 abstract: >
-  Karvon is a macOS desktop control panel that supervises local and
-  remote development processes, runs multi-stage deploy pipelines (including
-  over SSH), and exposes an optional HTTP API for scripting.
+  Karvon is a cross-platform (macOS and Windows) desktop control panel that
+  supervises local and remote development processes, runs multi-stage deploy
+  pipelines (including over SSH), and exposes an optional HTTP API for scripting.

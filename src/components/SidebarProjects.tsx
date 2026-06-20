@@ -15,6 +15,7 @@ import {
 import { useEffect, useState } from "react";
 import { RuntimeDot } from "./RuntimeDot";
 import { formatMemory } from "../lib/memory";
+import { modKeyLabel } from "../lib/platform";
 import { FAILED_STATUSES, isRuntimeBusy } from "../lib/status";
 import { formatRelativeTime } from "../lib/time";
 import { useOrchestratorStore } from "../stores/orchestratorStore";
@@ -213,7 +214,7 @@ export function SidebarProjects() {
 
       <div className="sidebar-footer">
         <button className="solo-footer-row" type="button" title="Command palette" onClick={() => window.dispatchEvent(new Event("open-command-palette"))}>
-          <kbd>⌘ K</kbd>
+          <kbd>{modKeyLabel} K</kbd>
           <span>to launch actions</span>
         </button>
         <button className={`solo-footer-row ${view === "settings" ? "active" : ""}`} type="button" onClick={() => selectView("settings")}>

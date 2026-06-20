@@ -1,9 +1,13 @@
 # Configuration reference
 
-Karvon stores all state as JSON in:
+Karvon stores all state as JSON in the OS application-config directory:
 
 ```
+# macOS
 ~/Library/Application Support/uz.blaze.karvon/config.json
+
+# Windows
+%APPDATA%\uz.blaze.karvon\config.json
 ```
 
 You normally edit it through the UI. This page documents the schema so you can

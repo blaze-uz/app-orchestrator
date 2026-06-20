@@ -585,10 +585,14 @@ impl Default for AppConfig {
 
 impl Machine {
     pub fn default_local(now: DateTime<Utc>) -> Self {
-        let ssh_user = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
+        // `USER` on unix, `USERNAME` on Windows.
+        let ssh_user = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "root".to_string());
+        let name = if cfg!(windows) { "This PC" } else { "This Mac" };
         Self {
             id: DEFAULT_LOCAL_MACHINE_ID.to_string(),
-            name: "This Mac".to_string(),
+            name: name.to_string(),
             hostname: "127.0.0.1".to_string(),
             ssh_user,
             ssh_port: 22,

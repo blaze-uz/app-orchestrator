@@ -10,17 +10,12 @@ use crate::{
     state::AppState,
     storage,
 };
+use crate::platform::{self, ExternalProcessRow};
 use chrono::{Duration as ChronoDuration, Utc};
-use nix::{
-    errno::Errno,
-    sys::resource::{setrlimit, Resource},
-    sys::signal::{killpg, Signal},
-    unistd::Pid,
-};
 use std::{
     collections::{HashMap, HashSet},
     env,
-    io::{Error, ErrorKind},
+    io::ErrorKind,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -44,14 +39,6 @@ const RESTART_BACKOFF_MAX_EXPONENT: u32 = 6;
 // considered "stable": its restart_count is reset so a single late crash does
 // not inherit the escalated backoff. See MEDIA_GUARD_TECHDEBT_PLAN P2.
 const RESTART_STABLE_RESET_MS: u64 = RESTART_BACKOFF_CAP_MS;
-const STANDARD_PROCESS_PATHS: &[&str] = &[
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    "/usr/bin",
-    "/bin",
-    "/usr/sbin",
-    "/sbin",
-];
 
 pub fn log_history_since() -> chrono::DateTime<Utc> {
     Utc::now() - ChronoDuration::minutes(LOG_HISTORY_WINDOW_MINUTES)
@@ -385,7 +372,9 @@ async fn start_process_inner(
             terminate_process_group_gracefully(process_group_id, stop_timeout_ms).await;
         }
         let recovered_pid = match (wait_is_remote, wait_process_group_id) {
-            (false, Some(process_group_id)) => live_process_in_group(process_group_id).await,
+            (false, Some(process_group_id)) => {
+                platform::live_process_in_group(process_group_id).await
+            }
             _ => None,
         };
         let stop_requested = match wait_process_group_id {
@@ -626,9 +615,9 @@ async fn stop_process_inner(
     )
     .await;
 
-    match signal_process_group(pid, Signal::SIGTERM) {
+    match term_process_group(pid) {
         Ok(()) => {}
-        Err(Errno::ESRCH) => {
+        Err(platform::GroupError::NotFound) => {
             runtime.current_status = ProcessStatus::Stopped;
             runtime.stopped_at = Some(Utc::now());
             runtime.pid = None;
@@ -713,7 +702,7 @@ async fn stop_process_inner(
                 .await
                 .remove(&force_process.id);
         }
-        if let Some(live_pid) = live_process_in_group(force_process_group_id).await {
+        if let Some(live_pid) = platform::live_process_in_group(force_process_group_id).await {
             if update_tracked_process_pid(
                 &force_state,
                 &force_process.id,
@@ -896,7 +885,7 @@ pub async fn sync_external_processes(app: AppHandle, state: AppState) {
         return;
     }
 
-    let rows = list_live_processes().await;
+    let rows = platform::list_live_processes().await;
     if rows.is_empty() {
         return;
     }
@@ -1014,12 +1003,12 @@ pub async fn list_external_project_processes(
         .map(normalized_process_group_id)
         .collect();
 
-    let rows = list_live_processes().await;
+    let rows = platform::list_live_processes().await;
     if rows.is_empty() {
         return ApiResponse::ok(vec![]);
     }
 
-    let cwds = list_all_process_cwds().await;
+    let cwds = platform::all_process_cwds().await;
     let self_pid = std::process::id();
 
     let mut rows_by_group: HashMap<u32, Vec<ExternalProcessRow>> = HashMap::new();
@@ -1052,7 +1041,7 @@ pub async fn list_external_project_processes(
     }
 
     let leader_pids: Vec<u32> = leaders.iter().map(|r| r.pid).collect();
-    let ports_by_pid = list_listening_ports(&leader_pids).await;
+    let ports_by_pid = platform::listening_ports_for_pids(&leader_pids).await;
 
     let mut results = Vec::with_capacity(leaders.len());
     for leader in leaders {
@@ -1108,7 +1097,7 @@ pub async fn stop_external_process(state: AppState, process_group_id: u32) -> Ap
     }
 
     let stop_timeout_ms = state.config.read().await.settings.stop_timeout_ms;
-    if let Err(error) = signal_process_group(process_group_id, Signal::SIGTERM) {
+    if let Err(error) = term_process_group(process_group_id) {
         return ApiResponse::err(ApiError::with_details(
             "STOP_FAILED",
             "Failed to signal process",
@@ -1124,159 +1113,23 @@ pub async fn stop_external_process(state: AppState, process_group_id: u32) -> Ap
 }
 
 pub async fn find_process_on_port(port: u16) -> ApiResponse<Option<ExternalProcess>> {
-    let output = Command::new("lsof")
-        .arg(format!("-iTCP:{port}"))
-        .arg("-sTCP:LISTEN")
-        .arg("-P")
-        .arg("-n")
-        .arg("-Fpcg")
-        .stderr(Stdio::null())
-        .output()
-        .await;
-    let Ok(output) = output else {
+    let Some((pid, process_group_id, command)) = platform::find_listener_on_port(port).await else {
         return ApiResponse::ok(None);
     };
-    if output.stdout.is_empty() {
-        return ApiResponse::ok(None);
-    }
-    let text = String::from_utf8_lossy(&output.stdout).into_owned();
-
-    let mut pid: Option<u32> = None;
-    let mut pgid: Option<u32> = None;
-    let mut command: Option<String> = None;
-    let mut found: Option<ExternalProcess> = None;
-
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix('p') {
-            if let (Some(p), Some(g)) = (pid, pgid) {
-                let cwd = process_cwd(p).await.unwrap_or_default();
-                found = Some(ExternalProcess {
-                    pid: p,
-                    process_group_id: g,
-                    command: command.clone().unwrap_or_default(),
-                    cwd,
-                    user: String::new(),
-                    started_at: String::new(),
-                    etime: String::new(),
-                    cpu_percent: 0.0,
-                    memory_kb: 0,
-                    ports: Vec::new(),
-                    children: Vec::new(),
-                });
-                break;
-            }
-            pid = rest.trim().parse().ok();
-            pgid = None;
-            command = None;
-        } else if let Some(rest) = line.strip_prefix('g') {
-            pgid = rest.trim().parse().ok();
-        } else if let Some(rest) = line.strip_prefix('c') {
-            command = Some(rest.to_string());
-        }
-    }
-
-    if found.is_none() {
-        if let (Some(p), Some(g)) = (pid, pgid) {
-            let cwd = process_cwd(p).await.unwrap_or_default();
-            found = Some(ExternalProcess {
-                pid: p,
-                process_group_id: g,
-                command: command.unwrap_or_default(),
-                cwd,
-                user: String::new(),
-                started_at: String::new(),
-                etime: String::new(),
-                cpu_percent: 0.0,
-                memory_kb: 0,
-                ports: Vec::new(),
-                children: Vec::new(),
-            });
-        }
-    }
-
-    ApiResponse::ok(found)
-}
-
-async fn list_listening_ports(pids: &[u32]) -> HashMap<u32, Vec<u32>> {
-    if pids.is_empty() {
-        return HashMap::new();
-    }
-    let pid_arg = pids
-        .iter()
-        .map(|p| p.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    let output = Command::new("lsof")
-        .arg("-iTCP")
-        .arg("-sTCP:LISTEN")
-        .arg("-P")
-        .arg("-n")
-        .arg("-Fpn")
-        .arg("-p")
-        .arg(pid_arg)
-        .stderr(Stdio::null())
-        .output()
-        .await;
-    let Ok(output) = output else {
-        return HashMap::new();
-    };
-    if output.stdout.is_empty() {
-        return HashMap::new();
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut result: HashMap<u32, Vec<u32>> = HashMap::new();
-    let mut current_pid: Option<u32> = None;
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix('p') {
-            current_pid = rest.trim().parse().ok();
-        } else if let Some(rest) = line.strip_prefix('n') {
-            let Some(pid) = current_pid else {
-                continue;
-            };
-            // rest looks like "*:8000" or "127.0.0.1:8765" or "[::1]:3000"
-            let port_str = rest.rsplit(':').next().unwrap_or("");
-            let Ok(port) = port_str.parse::<u32>() else {
-                continue;
-            };
-            let entry = result.entry(pid).or_default();
-            if !entry.contains(&port) {
-                entry.push(port);
-            }
-        }
-    }
-    for ports in result.values_mut() {
-        ports.sort_unstable();
-    }
-    result
-}
-
-async fn list_all_process_cwds() -> HashMap<u32, String> {
-    let output = Command::new("lsof")
-        .arg("-d")
-        .arg("cwd")
-        .arg("-Fpn")
-        .stderr(Stdio::null())
-        .output()
-        .await;
-    let Ok(output) = output else {
-        return HashMap::new();
-    };
-    if output.stdout.is_empty() {
-        return HashMap::new();
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut result = HashMap::new();
-    let mut current_pid: Option<u32> = None;
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix('p') {
-            current_pid = rest.trim().parse().ok();
-        } else if let Some(rest) = line.strip_prefix('n') {
-            if let Some(pid) = current_pid {
-                result.insert(pid, rest.to_string());
-            }
-        }
-    }
-    result
+    let cwd = platform::process_cwd(pid).await.unwrap_or_default();
+    ApiResponse::ok(Some(ExternalProcess {
+        pid,
+        process_group_id,
+        command,
+        cwd,
+        user: String::new(),
+        started_at: String::new(),
+        etime: String::new(),
+        cpu_percent: 0.0,
+        memory_kb: 0,
+        ports: Vec::new(),
+        children: Vec::new(),
+    }))
 }
 
 pub async fn shutdown_tracked_processes(app: AppHandle, state: AppState) {
@@ -1290,7 +1143,7 @@ pub async fn shutdown_tracked_processes(app: AppHandle, state: AppState) {
         records.values().map(normalized_process_group_id).collect();
 
     for process_group_id in &process_group_ids {
-        let _ = signal_process_group(*process_group_id, Signal::SIGTERM);
+        let _ = term_process_group(*process_group_id);
     }
 
     sleep(Duration::from_millis(stop_timeout_ms)).await;
@@ -1305,7 +1158,7 @@ pub async fn shutdown_tracked_processes(app: AppHandle, state: AppState) {
     let mut surviving_records = HashMap::new();
     for (process_id, mut record) in records {
         let process_group_id = normalized_process_group_id(&record);
-        if let Some(live_pid) = live_process_in_group(process_group_id).await {
+        if let Some(live_pid) = platform::live_process_in_group(process_group_id).await {
             record.pid = live_pid;
             record.process_group_id = process_group_id;
             surviving_records.insert(process_id, record);
@@ -1492,9 +1345,9 @@ async fn clear_stop_requests_for_process(state: &AppState, process_id: &str) {
 }
 
 async fn terminate_process_group_gracefully(process_group_id: u32, stop_timeout_ms: u64) {
-    let should_wait = match signal_process_group(process_group_id, Signal::SIGTERM) {
+    let should_wait = match term_process_group(process_group_id) {
         Ok(()) => true,
-        Err(Errno::ESRCH) => false,
+        Err(platform::GroupError::NotFound) => false,
         Err(_) => true,
     };
     if !should_wait {
@@ -1507,83 +1360,31 @@ async fn terminate_process_group_gracefully(process_group_id: u32, stop_timeout_
     }
 }
 
-fn signal_process_group(process_group_id: u32, signal: Signal) -> Result<(), Errno> {
-    // Never signal pgid 0 (killpg(0, …) targets the CALLER's own group → would
-    // kill the orchestrator and every managed process) or 1 (init). A pgid <= 1
-    // here means a missing/garbage value, not a real child group. Report it as
-    // "no such process" so callers treat it as already gone.
-    // See MEDIA_GUARD_TECHDEBT_PLAN P2.
+// The `pgid <= 1` guard is shared by all three wrappers: pgid 0 would target the
+// CALLER's own group (killing the orchestrator and every managed process) and 1
+// is init. A value <= 1 here means a missing/garbage id, not a real child group,
+// so it is reported as "already gone". See MEDIA_GUARD_TECHDEBT_PLAN P2. The
+// actual OS call is delegated to the platform layer (POSIX `killpg` on unix,
+// `taskkill /T` on Windows).
+fn term_process_group(process_group_id: u32) -> Result<(), platform::GroupError> {
     if process_group_id <= 1 {
-        return Err(Errno::ESRCH);
+        return Err(platform::GroupError::NotFound);
     }
-    killpg(Pid::from_raw(process_group_id as i32), signal)
+    platform::terminate_group(process_group_id)
 }
 
-fn force_kill_process_group(process_group_id: u32) -> Result<(), Errno> {
-    signal_process_group(process_group_id, Signal::SIGKILL)
+fn force_kill_process_group(process_group_id: u32) -> Result<(), platform::GroupError> {
+    if process_group_id <= 1 {
+        return Err(platform::GroupError::NotFound);
+    }
+    platform::force_kill_group(process_group_id)
 }
 
 fn process_group_exists(process_group_id: u32) -> bool {
-    // Same guard as signal_process_group: pgid <= 1 is never a managed child
-    // group, so report "does not exist" rather than probing our own group.
     if process_group_id <= 1 {
         return false;
     }
-    match killpg(Pid::from_raw(process_group_id as i32), None::<Signal>) {
-        Ok(()) => true,
-        Err(Errno::ESRCH) => false,
-        Err(_) => true,
-    }
-}
-
-#[derive(Clone, Debug)]
-struct ExternalProcessRow {
-    pid: u32,
-    process_group_id: u32,
-    stat: String,
-    command: String,
-    user: String,
-    memory_kb: u64,
-    cpu_percent: f32,
-    etime: String,
-    started_at: String,
-}
-
-async fn list_live_processes() -> Vec<ExternalProcessRow> {
-    let output = Command::new("ps")
-        .arg("-ax")
-        .arg("-o")
-        .arg("pid=")
-        .arg("-o")
-        .arg("pgid=")
-        .arg("-o")
-        .arg("user=")
-        .arg("-o")
-        .arg("rss=")
-        .arg("-o")
-        .arg("pcpu=")
-        .arg("-o")
-        .arg("etime=")
-        .arg("-o")
-        .arg("stat=")
-        .arg("-o")
-        .arg("lstart=")
-        .arg("-o")
-        .arg("command=")
-        .stderr(Stdio::null())
-        .output()
-        .await;
-    let Ok(output) = output else {
-        return vec![];
-    };
-    if !output.status.success() {
-        return vec![];
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(parse_external_process_row)
-        .filter(|row| is_live_process_stat(&row.stat))
-        .collect()
+    platform::group_exists(process_group_id)
 }
 
 async fn find_external_process_match(
@@ -1599,7 +1400,7 @@ async fn find_external_process_match(
         if !command_tokens_match(command_tokens, &row.command) {
             continue;
         }
-        let Some(cwd) = process_cwd(row.pid).await else {
+        let Some(cwd) = platform::process_cwd(row.pid).await else {
             continue;
         };
         if cwd_matches_root(&cwd, configured_cwd) {
@@ -1607,64 +1408,6 @@ async fn find_external_process_match(
         }
     }
     None
-}
-
-fn parse_external_process_row(line: &str) -> Option<ExternalProcessRow> {
-    let (pid, remainder) = take_process_token(line.trim_start())?;
-    let (process_group_id, remainder) = take_process_token(remainder)?;
-    let (user, remainder) = take_process_token(remainder)?;
-    let (rss, remainder) = take_process_token(remainder)?;
-    let (pcpu, remainder) = take_process_token(remainder)?;
-    let (etime, remainder) = take_process_token(remainder)?;
-    let (stat, remainder) = take_process_token(remainder)?;
-    // lstart is a fixed 5-token timestamp like "Sat May 10 12:34:56 2026"
-    let mut lstart_tokens: Vec<&str> = Vec::with_capacity(5);
-    let mut cursor = remainder;
-    for _ in 0..5 {
-        let (token, rest) = take_process_token(cursor)?;
-        lstart_tokens.push(token);
-        cursor = rest;
-    }
-    Some(ExternalProcessRow {
-        pid: pid.parse().ok()?,
-        process_group_id: process_group_id.parse().ok()?,
-        stat: stat.to_string(),
-        command: cursor.trim_start().to_string(),
-        user: user.to_string(),
-        memory_kb: rss.parse().unwrap_or(0),
-        cpu_percent: pcpu.parse().unwrap_or(0.0),
-        etime: etime.to_string(),
-        started_at: lstart_tokens.join(" "),
-    })
-}
-
-fn take_process_token(input: &str) -> Option<(&str, &str)> {
-    let input = input.trim_start();
-    if input.is_empty() {
-        return None;
-    }
-    let end = input.find(char::is_whitespace).unwrap_or(input.len());
-    Some((&input[..end], &input[end..]))
-}
-
-async fn process_cwd(pid: u32) -> Option<String> {
-    let output = Command::new("lsof")
-        .arg("-a")
-        .arg("-p")
-        .arg(pid.to_string())
-        .arg("-d")
-        .arg("cwd")
-        .arg("-Fn")
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .find_map(|line| line.strip_prefix('n').map(|value| value.to_string()))
 }
 
 fn cwd_matches_root(candidate_cwd: &str, configured_cwd: &str) -> bool {
@@ -1716,79 +1459,17 @@ async fn live_pid_for_record(record: &RuntimeProcessRecord) -> Option<u32> {
     if process_is_live_in_group(record.pid, process_group_id).await {
         Some(record.pid)
     } else {
-        live_process_in_group(process_group_id).await
+        platform::live_process_in_group(process_group_id).await
     }
 }
 
 async fn process_is_live_in_group(pid: u32, process_group_id: u32) -> bool {
-    process_info_for_pid(pid)
+    platform::process_info_for_pid(pid)
         .await
         .map(|(found_process_group_id, stat)| {
-            found_process_group_id == process_group_id && is_live_process_stat(&stat)
+            found_process_group_id == process_group_id && platform::is_live_stat(&stat)
         })
         .unwrap_or(false)
-}
-
-async fn process_info_for_pid(pid: u32) -> Option<(u32, String)> {
-    let output = Command::new("ps")
-        .arg("-o")
-        .arg("pgid=")
-        .arg("-o")
-        .arg("stat=")
-        .arg("-p")
-        .arg(pid.to_string())
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let output = String::from_utf8_lossy(&output.stdout);
-    let mut parts = output.split_whitespace();
-    let process_group_id = parts.next()?.parse::<u32>().ok()?;
-    let stat = parts.next()?.to_string();
-    Some((process_group_id, stat))
-}
-
-async fn live_process_in_group(process_group_id: u32) -> Option<u32> {
-    let output = Command::new("ps")
-        .arg("-ax")
-        .arg("-o")
-        .arg("pid=")
-        .arg("-o")
-        .arg("pgid=")
-        .arg("-o")
-        .arg("stat=")
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(parse_process_group_row)
-        .find_map(|(pid, found_process_group_id, stat)| {
-            if found_process_group_id == process_group_id && is_live_process_stat(&stat) {
-                Some(pid)
-            } else {
-                None
-            }
-        })
-}
-
-fn parse_process_group_row(line: &str) -> Option<(u32, u32, String)> {
-    let mut parts = line.split_whitespace();
-    let pid = parts.next()?.parse::<u32>().ok()?;
-    let process_group_id = parts.next()?.parse::<u32>().ok()?;
-    let stat = parts.next()?.to_string();
-    Some((pid, process_group_id, stat))
-}
-
-fn is_live_process_stat(stat: &str) -> bool {
-    !stat.contains('Z')
 }
 
 pub async fn restart_process(
@@ -2824,11 +2505,7 @@ pub(crate) fn direct_process_command(tokens: &[String]) -> Command {
 }
 
 pub(crate) fn shell_process_command(tokens: &[String]) -> Command {
-    let mut command = Command::new("/bin/zsh");
-    command
-        .arg("-lc")
-        .arg(format!("exec {}", display_command(tokens)));
-    command
+    platform::shell_command(tokens)
 }
 
 pub(crate) fn configure_process_command(
@@ -2837,9 +2514,9 @@ pub(crate) fn configure_process_command(
     env: &HashMap<String, String>,
     memory_limit_mb: Option<u64>,
 ) {
-    // Put each managed command in its own process group so shells and spawned workers
-    // can be terminated together.
-    command.process_group(0);
+    // Put each managed command in its own process group / console group so shells
+    // and the workers they spawn can be terminated together.
+    platform::set_process_group(command);
     command.current_dir(cwd);
     command.envs(effective_process_env(env));
     command
@@ -2847,56 +2524,20 @@ pub(crate) fn configure_process_command(
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
     if let Some(memory_limit_mb) = memory_limit_mb {
-        let memory_limit_bytes = mb_to_bytes(memory_limit_mb);
-        unsafe {
-            command.pre_exec(move || {
-                setrlimit(
-                    Resource::RLIMIT_AS,
-                    memory_limit_bytes as _,
-                    memory_limit_bytes as _,
-                )
-                .map_err(|error| Error::new(ErrorKind::Other, error))?;
-                Ok(())
-            });
-        }
+        platform::apply_memory_limit(command, mb_to_bytes(memory_limit_mb));
     }
 }
 
 fn effective_process_env(process_env: &HashMap<String, String>) -> HashMap<String, String> {
     let mut env = process_env.clone();
     if !env.contains_key("PATH") {
+        let home = env::var("HOME").or_else(|_| env::var("USERPROFILE")).ok();
         env.insert(
             "PATH".to_string(),
-            default_process_path(env::var("PATH").ok(), env::var("HOME").ok()),
+            platform::default_process_path(env::var("PATH").ok(), home),
         );
     }
     env
-}
-
-fn default_process_path(inherited_path: Option<String>, home_dir: Option<String>) -> String {
-    let mut paths = Vec::new();
-    if let Some(home_dir) = home_dir {
-        paths.push(format!("{home_dir}/Library/Application Support/Herd/bin"));
-    }
-    paths.extend(STANDARD_PROCESS_PATHS.iter().map(|path| path.to_string()));
-    if let Some(inherited_path) = inherited_path {
-        paths.extend(
-            inherited_path
-                .split(':')
-                .map(str::trim)
-                .filter(|path| !path.is_empty())
-                .map(str::to_string),
-        );
-    }
-    dedupe_paths(paths).join(":")
-}
-
-fn dedupe_paths(paths: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    paths
-        .into_iter()
-        .filter(|path| seen.insert(path.clone()))
-        .collect()
 }
 
 fn spawn_memory_monitor(
@@ -2923,9 +2564,9 @@ fn spawn_memory_monitor(
                 pid = tracked_record.pid;
             }
 
-            let Some((memory_usage, cpu_usage)) = read_process_metrics(pid).await else {
+            let Some((memory_usage, cpu_usage)) = platform::read_process_metrics(pid).await else {
                 let process_group_id = normalized_process_group_id(&tracked_record);
-                if let Some(live_pid) = live_process_in_group(process_group_id).await {
+                if let Some(live_pid) = platform::live_process_in_group(process_group_id).await {
                     update_tracked_process_pid(&state, &process_id, live_pid, process_group_id)
                         .await;
                     let _ = persist_runtime_processes(&app, &state).await;
@@ -3026,26 +2667,6 @@ fn spawn_memory_monitor(
             }
         }
     });
-}
-
-async fn read_process_metrics(pid: u32) -> Option<(u64, Option<f64>)> {
-    let output = Command::new("ps")
-        .arg("-o")
-        .arg("rss=,pcpu=")
-        .arg("-p")
-        .arg(pid.to_string())
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let output = String::from_utf8_lossy(&output.stdout);
-    let mut tokens = output.split_whitespace();
-    let rss_kb = tokens.next()?.parse::<u64>().ok()?;
-    let cpu_usage = tokens.next().and_then(|token| token.parse::<f64>().ok());
-    Some((rss_kb.saturating_mul(1024), cpu_usage))
 }
 
 async fn config_project_process_pair(
@@ -3707,9 +3328,10 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn default_process_path_includes_herd_bin_first() {
-        let path = default_process_path(
+        let path = platform::default_process_path(
             Some("/custom/bin:/usr/bin".to_string()),
             Some("/Users/example".to_string()),
         );
@@ -3724,9 +3346,10 @@ mod tests {
         assert!(entries.contains(&"/custom/bin"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn default_process_path_deduplicates_entries() {
-        let path = default_process_path(
+        let path = platform::default_process_path(
             Some("/usr/local/bin:/opt/homebrew/bin:/custom/bin:/custom/bin".to_string()),
             Some("/Users/example".to_string()),
         );
@@ -3760,6 +3383,7 @@ mod tests {
         assert_eq!(env.get("APP_ENV").map(String::as_str), Some("local"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn effective_process_env_keeps_unrelated_vars() {
         let mut process_env = HashMap::new();

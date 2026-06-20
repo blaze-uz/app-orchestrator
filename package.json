@@ -1,8 +1,8 @@
 {
   "name": "karvon",
   "private": true,
-  "version": "0.1.0",
-  "description": "macOS desktop control panel for orchestrating local + remote dev processes, deploy pipelines, and SSH-driven multi-machine workflows.",
+  "version": "0.2.0",
+  "description": "Cross-platform (macOS + Windows) desktop control panel for orchestrating local + remote dev processes, deploy pipelines, and SSH-driven multi-machine workflows.",
   "homepage": "https://github.com/blaze-uz/karvon#readme",
   "bugs": {
     "url": "https://github.com/blaze-uz/karvon/issues"
@@ -14,6 +14,8 @@
   "license": "MIT",
   "keywords": [
     "macos",
+    "windows",
+    "cross-platform",
     "tauri",
     "desktop-app",
     "process-manager",
@@ -36,8 +38,8 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "tauri": "PATH=\"$HOME/.cargo/bin:$PATH\" tauri",
-    "tauri:dev": "PATH=\"$HOME/.cargo/bin:$PATH\" tauri dev",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
     "tauri:build": "node scripts/tauri-build.mjs",
     "desktop:build": "node scripts/tauri-build.mjs",
     "desktop:install": "node scripts/desktop-install.mjs",

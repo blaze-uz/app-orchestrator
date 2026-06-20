@@ -1,4 +1,5 @@
 use crate::models::{Machine, MachineConnectionResult};
+use crate::platform;
 use std::{collections::HashMap, process::Stdio, time::Duration};
 use tokio::{process::Command, time::Instant};
 
@@ -20,7 +21,7 @@ pub fn build_ssh_command(
     command.arg(format!("{}@{}", machine.ssh_user, machine.hostname));
     command.arg(build_remote_payload(user_command, cwd, env));
     command.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
-    command.process_group(0);
+    platform::set_process_group(&mut command);
     command
 }
 

@@ -1,7 +1,7 @@
 title: Karvon
 description: >
-  macOS desktop control panel for orchestrating local + remote dev processes,
-  deploy pipelines, and SSH-driven multi-machine workflows.
+  Cross-platform (macOS + Windows) desktop control panel for orchestrating local
+  + remote dev processes, deploy pipelines, and SSH-driven multi-machine workflows.
 url: https://blaze-uz.github.io
 baseurl: /karvon
 repository: blaze-uz/karvon

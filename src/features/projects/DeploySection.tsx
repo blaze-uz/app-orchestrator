@@ -381,7 +381,7 @@ export function DeploySection({ project }: { project: Project }) {
                 value={draft.machineId ?? ""}
                 onChange={(event) => setDraft({ ...draft, machineId: event.target.value || undefined })}
               >
-                <option value="">{machines.find((machine) => machine.isDefaultLocal)?.name ?? "This Mac"} (local)</option>
+                <option value="">{machines.find((machine) => machine.isDefaultLocal)?.name ?? "Local"} (local)</option>
                 {machines
                   .filter((machine) => !machine.isDefaultLocal)
                   .map((machine) => (

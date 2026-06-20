@@ -1,7 +1,7 @@
 [package]
 name = "karvon"
-version = "0.1.0"
-description = "macOS local project orchestration panel"
+version = "0.2.0"
+description = "Cross-platform local & remote project orchestration panel (macOS + Windows)"
 authors = ["Karvon"]
 edition = "2021"
 
@@ -10,7 +10,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
-nix = { version = "0.29", features = ["process", "resource", "signal"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
@@ -27,3 +26,9 @@ axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.6", features = ["cors"] }
 rand = "0.8"
+
+# POSIX process-group + rlimit syscalls. Unix-only — the Windows process
+# supervision path (see src/platform/windows.rs) uses creation flags + taskkill
+# instead, so `nix` must not be pulled in for the Windows target.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["process", "resource", "signal"] }

@@ -4,6 +4,7 @@ mod deploy;
 mod health;
 mod http_api;
 mod models;
+mod platform;
 mod process_manager;
 mod ssh_executor;
 mod state;

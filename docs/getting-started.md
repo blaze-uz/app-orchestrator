@@ -5,20 +5,30 @@ five minutes.
 
 ## 1. Install
 
-Either download a pre-built `.dmg` from
-[Releases](https://github.com/blaze-uz/karvon/releases) and drag the
-app to `/Applications`, or build from source:
+Download a pre-built installer from
+[Releases](https://github.com/blaze-uz/karvon/releases):
+
+- **macOS** — grab the `.dmg` and drag the app to `/Applications`.
+- **Windows 10/11** — run the `Karvon_x64-setup.exe` (NSIS) installer.
+
+Or build from source:
 
 ```bash
 git clone https://github.com/blaze-uz/karvon.git
 cd karvon
 npm install
-npm run desktop:install
+npm run tauri:build          # native bundle in src-tauri/target/release/bundle
+# macOS shortcut: npm run desktop:install (build + copy to /Applications)
 ```
 
-Requirements: macOS 12+, Node LTS, Rust stable, Xcode Command Line Tools.
+Requirements:
 
-Open `Karvon.app`. You'll land on the empty Dashboard.
+- **macOS** 12+, Node LTS, Rust stable, Xcode Command Line Tools.
+- **Windows** 10/11, Node LTS, Rust stable (MSVC), Visual Studio Build Tools
+  (*Desktop development with C++*). OpenSSH client for remote machines.
+
+Launch Karvon (open `Karvon.app` on macOS, or from the Start menu on Windows).
+You'll land on the empty Dashboard.
 
 ## 2. Add a project
 

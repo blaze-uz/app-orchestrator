@@ -1,8 +1,8 @@
 # Karvon documentation
 
-Welcome. Karvon is a macOS desktop control panel for orchestrating
-local and remote development processes. This directory holds the canonical
-documentation.
+Welcome. Karvon is a cross-platform (macOS + Windows) desktop control panel for
+orchestrating local and remote development processes. This directory holds the
+canonical documentation.
 
 ## Start here
 
@@ -12,7 +12,7 @@ documentation.
 | [Configuration reference](configuration.md) | Field-by-field reference for `config.json`. |
 | [HTTP API](http-api.md) | Drive the orchestrator from scripts and dashboards. |
 | [Deploy pipelines](deployments.md) | Define ordered scripts that run locally or over SSH. |
-| [Remote machines & SSH](ssh-remote-machines.md) | Register a remote Mac and route work to it. |
+| [Remote machines & SSH](ssh-remote-machines.md) | Register a remote host and route work to it. |
 | [Troubleshooting & FAQ](troubleshooting.md) | The "why isn't this working" page. |
 | [Architecture](ARCHITECTURE.md) | How the layers fit together. |
 
@@ -22,7 +22,7 @@ documentation.
 - [CONTRIBUTING](../CONTRIBUTING.md) — local setup, fork checklist, PR conventions.
 - [SECURITY](../SECURITY.md) — threat model and vulnerability disclosure.
 - [Releases](https://github.com/blaze-uz/karvon/releases) — download
-  the latest `.dmg`.
+  the latest `.dmg` (macOS) or `-setup.exe` (Windows).
 
 ## Concepts at a glance
 

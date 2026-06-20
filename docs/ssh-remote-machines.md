@@ -1,12 +1,16 @@
 # Remote machines & SSH
 
-Karvon can drive processes and deploys on remote Macs over SSH. This
+Karvon can drive processes and deploys on remote hosts over SSH. This
 page covers what's required and how it works in practice.
 
 ## Prerequisites
 
-- The orchestrator runs on macOS.
-- The remote host must accept SSH connections.
+- The orchestrator runs on macOS or Windows. On Windows it uses the built-in
+  OpenSSH client (`ssh.exe`); enable it under *Settings → Apps → Optional
+  features* if it is missing.
+- The remote host must accept SSH connections. Remote *targets* must be
+  macOS/Linux: the orchestrator's remote payload is a POSIX shell script
+  (`sh`, `kill`, `$$`), so a Windows remote target is not supported.
 - Authentication uses public-key SSH. Passwords and interactive prompts are
   not supported (the client uses `BatchMode=yes`).
 - The SSH key must be loaded in the agent, or its path must be set explicitly
