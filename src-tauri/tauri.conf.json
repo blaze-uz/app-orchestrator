@@ -44,7 +44,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg3MjNEM0FFRENFRDA3OEMKUldTTUIrM2NydE1qaDcrbzRGRnZjYzh2WDZTemdoQk5ITkl4cit4RnpPZU5YaXdCdEU0TldZVnkK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVGNEExMThDNTlBOEQ2MkIKUldRcjFxaFpqQkZLNzVPM1NHSGRYWlpSMzhlaW9NVDRRc3FVeU9QRmN4UXdtaW9IVUFRU2FrT08K",
       "endpoints": [
         "https://github.com/blaze-uz/karvon/releases/latest/download/latest.json"
       ]
