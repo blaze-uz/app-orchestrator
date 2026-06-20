@@ -325,6 +325,12 @@ async fn execute_pipeline(
                 record.last_succeeded_commit = Some(record.last_attempted_commit.clone());
                 changed = true;
             }
+            // Clear the auto-deploy failure backoff once a deploy succeeds.
+            // See MEDIA_GUARD_TECHDEBT_PLAN P2.
+            if record.failed_attempts != 0 {
+                record.failed_attempts = 0;
+                changed = true;
+            }
         }
         if changed {
             if let Err(err) = storage::save_config(&app, &config) {

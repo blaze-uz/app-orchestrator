@@ -16,6 +16,21 @@ use tokio::{
 
 const POLL_INTERVAL_SECS: u64 = 60;
 const PER_PROJECT_TIMEOUT_SECS: u64 = 15;
+/// After this many consecutive failed auto-deploys of the same SHA, stop
+/// retrying until the remote SHA moves. See MEDIA_GUARD_TECHDEBT_PLAN P2.
+const MAX_AUTO_DEPLOY_ATTEMPTS: u32 = 8;
+const AUTO_DEPLOY_BACKOFF_MAX_EXP: u32 = 5;
+const AUTO_DEPLOY_BACKOFF_CAP_SECS: u64 = 1800; // 30 min
+
+/// Exponential backoff between retries of a failing same-SHA deploy: ~60s, 120s,
+/// 240s, … capped at 30 min. `failures` is the count of prior failed attempts.
+fn auto_deploy_backoff(failures: u32) -> chrono::Duration {
+    let exp = failures.saturating_sub(1).min(AUTO_DEPLOY_BACKOFF_MAX_EXP);
+    let secs = POLL_INTERVAL_SECS
+        .saturating_mul(1u64 << exp)
+        .min(AUTO_DEPLOY_BACKOFF_CAP_SECS);
+    chrono::Duration::seconds(secs as i64)
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -125,12 +140,36 @@ async fn poll_project(
             seed_record(&app, &state, &project.id, &branch, &remote_sha).await;
         }
         (Some(_), Some(true)) => {}
-        (Some(_), _) => {
+        (Some(record), _) => {
+            // A deploy that keeps failing on the same SHA must NOT be re-triggered
+            // every 60s forever (that retry storm is what fed the self-deploy loop
+            // incident). Apply exponential backoff keyed on `failed_attempts` and
+            // give up after a hard cap until the remote SHA moves. A new SHA resets
+            // the counter (same_sha = false). See MEDIA_GUARD_TECHDEBT_PLAN P2.
+            let same_sha = record.last_attempted_commit == remote_sha;
+            let prior_failures = if same_sha { record.failed_attempts } else { 0 };
+            if same_sha && prior_failures >= MAX_AUTO_DEPLOY_ATTEMPTS {
+                return; // give up until the remote SHA changes
+            }
+            if same_sha && prior_failures > 0 {
+                let backoff = auto_deploy_backoff(prior_failures);
+                if Utc::now().signed_duration_since(record.last_attempted_at) < backoff {
+                    return; // still inside the backoff window for this failing SHA
+                }
+            }
             // Record the attempt before triggering — the SHA, branch and timestamp
             // are useful for the UI even if the deploy never finishes. The success
             // tracking is updated separately by `execute_pipeline` so a failed
-            // deploy will be retried on the next poll.
-            record_attempt(&app, &state, &project.id, &branch, &remote_sha).await;
+            // deploy will be retried (with backoff) on a later poll.
+            record_attempt(
+                &app,
+                &state,
+                &project.id,
+                &branch,
+                &remote_sha,
+                prior_failures + 1,
+            )
+            .await;
             let commit_short: String = remote_sha.chars().take(7).collect();
             let _ = app.emit(
                 "auto_deploy_triggered",
@@ -174,6 +213,7 @@ async fn seed_record(
             last_attempted_at: Utc::now(),
             last_succeeded_commit: Some(sha.to_string()),
             last_failure_notified_commit: None,
+            failed_attempts: 0,
         },
     );
     if let Err(err) = storage::save_config(app, &config) {
@@ -192,6 +232,7 @@ async fn record_attempt(
     project_id: &Id,
     branch: &str,
     sha: &str,
+    failed_attempts: u32,
 ) {
     let mut config = state.config.write().await;
     let existing_succeeded = config
@@ -210,6 +251,7 @@ async fn record_attempt(
             last_attempted_at: Utc::now(),
             last_succeeded_commit: existing_succeeded,
             last_failure_notified_commit: existing_notified,
+            failed_attempts,
         },
     );
     if let Err(err) = storage::save_config(app, &config) {

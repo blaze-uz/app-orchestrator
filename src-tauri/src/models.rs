@@ -177,6 +177,13 @@ pub struct AutoDeployRecord {
     /// attempted commit changes (a new commit failing alerts again).
     #[serde(default)]
     pub last_failure_notified_commit: Option<String>,
+    /// Consecutive auto-deploy triggers for `last_attempted_commit` that have not
+    /// (yet) reached success. Drives exponential backoff + a hard cap so a
+    /// permanently-failing deploy is not re-triggered every 60s forever. Reset to
+    /// 0 on success; naturally ignored once the attempted commit changes.
+    /// See MEDIA_GUARD_TECHDEBT_PLAN P2.
+    #[serde(default)]
+    pub failed_attempts: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

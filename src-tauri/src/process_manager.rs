@@ -40,6 +40,10 @@ const LOG_BATCH_FLUSH_LIMIT: usize = 32;
 const LOG_BATCH_FLUSH_INTERVAL_MS: u64 = 50;
 const RESTART_BACKOFF_CAP_MS: u64 = 192_000;
 const RESTART_BACKOFF_MAX_EXPONENT: u32 = 6;
+// A process that ran longer than the worst-case backoff before crashing is
+// considered "stable": its restart_count is reset so a single late crash does
+// not inherit the escalated backoff. See MEDIA_GUARD_TECHDEBT_PLAN P2.
+const RESTART_STABLE_RESET_MS: u64 = RESTART_BACKOFF_CAP_MS;
 const STANDARD_PROCESS_PATHS: &[&str] = &[
     "/opt/homebrew/bin",
     "/usr/local/bin",
@@ -1504,6 +1508,14 @@ async fn terminate_process_group_gracefully(process_group_id: u32, stop_timeout_
 }
 
 fn signal_process_group(process_group_id: u32, signal: Signal) -> Result<(), Errno> {
+    // Never signal pgid 0 (killpg(0, …) targets the CALLER's own group → would
+    // kill the orchestrator and every managed process) or 1 (init). A pgid <= 1
+    // here means a missing/garbage value, not a real child group. Report it as
+    // "no such process" so callers treat it as already gone.
+    // See MEDIA_GUARD_TECHDEBT_PLAN P2.
+    if process_group_id <= 1 {
+        return Err(Errno::ESRCH);
+    }
     killpg(Pid::from_raw(process_group_id as i32), signal)
 }
 
@@ -1512,6 +1524,11 @@ fn force_kill_process_group(process_group_id: u32) -> Result<(), Errno> {
 }
 
 fn process_group_exists(process_group_id: u32) -> bool {
+    // Same guard as signal_process_group: pgid <= 1 is never a managed child
+    // group, so report "does not exist" rather than probing our own group.
+    if process_group_id <= 1 {
+        return false;
+    }
     match killpg(Pid::from_raw(process_group_id as i32), None::<Signal>) {
         Ok(()) => true,
         Err(Errno::ESRCH) => false,
@@ -2920,18 +2937,55 @@ fn spawn_memory_monitor(
                 if let Some((_, process)) =
                     config_project_process_pair(&state, &project_id, &process_id).await
                 {
+                    // A recovered process has no child.wait task, so this memory
+                    // monitor is its ONLY crash detector. Distinguish an operator
+                    // stop from a real crash and, on a crash, schedule the same
+                    // auto-restart the wait path would — otherwise a recovered
+                    // process that crashes stays down even under RestartPolicy
+                    // Always/OnFailure. See MEDIA_GUARD_TECHDEBT_PLAN P2.
+                    let prior_status = state
+                        .runtime
+                        .states
+                        .read()
+                        .await
+                        .get(&process_id)
+                        .map(|r| r.current_status.clone());
+                    let operator_stop = stop_was_requested(&state, &process_id, process_group_id)
+                        .await
+                        || matches!(
+                            prior_status,
+                            Some(ProcessStatus::Stopping | ProcessStatus::Stopped)
+                        );
+
                     let mut runtime = ProcessRuntimeState::stopped(process_id.clone());
                     runtime.stopped_at = Some(Utc::now());
-                    set_runtime(&app, &state, runtime, "process_stopped").await;
-                    append_log(
-                        &app,
-                        &state,
-                        &process,
-                        StreamType::System,
-                        LogLevel::Info,
-                        format!("Recovered process group {process_group_id} exited"),
-                    )
-                    .await;
+                    if operator_stop {
+                        set_runtime(&app, &state, runtime, "process_stopped").await;
+                        append_log(
+                            &app,
+                            &state,
+                            &process,
+                            StreamType::System,
+                            LogLevel::Info,
+                            format!("Recovered process group {process_group_id} exited"),
+                        )
+                        .await;
+                    } else {
+                        runtime.current_status = ProcessStatus::Crashed;
+                        runtime.last_error =
+                            Some("Recovered process group exited unexpectedly".to_string());
+                        set_runtime(&app, &state, runtime, "process_failed").await;
+                        append_log(
+                            &app,
+                            &state,
+                            &process,
+                            StreamType::System,
+                            LogLevel::Error,
+                            format!("Recovered process group {process_group_id} crashed"),
+                        )
+                        .await;
+                        schedule_auto_restart_if_eligible(&app, &state, &process).await;
+                    }
                 }
                 break;
             };
@@ -3511,14 +3565,32 @@ async fn schedule_auto_restart_if_eligible(
     process: &ProcessDefinition,
 ) {
     let policy = process.restart_policy.clone();
-    let current_count = state
+    let (prior_count, started_at) = state
         .runtime
         .states
         .read()
         .await
         .get(&process.id)
-        .map(|r| r.restart_count)
-        .unwrap_or(0);
+        .map(|r| (r.restart_count, r.started_at))
+        .unwrap_or((0, None));
+
+    // Reset the backoff/retry budget when the process had been running stably
+    // before this crash. Otherwise restart_count only ever grows, so one crash
+    // after a long, healthy uptime inherits the max 192s backoff (and can
+    // exhaust a LimitedRetries budget). See MEDIA_GUARD_TECHDEBT_PLAN P2.
+    let ran_stably = started_at
+        .map(|s| {
+            Utc::now().signed_duration_since(s).num_milliseconds() >= RESTART_STABLE_RESET_MS as i64
+        })
+        .unwrap_or(false);
+    let current_count = if ran_stably && prior_count > 0 {
+        if let Some(runtime) = state.runtime.states.write().await.get_mut(&process.id) {
+            runtime.restart_count = 0;
+        }
+        0
+    } else {
+        prior_count
+    };
 
     if !retry_eligible(&policy, current_count) {
         if matches!(policy.kind, RestartPolicyKind::LimitedRetries) {
