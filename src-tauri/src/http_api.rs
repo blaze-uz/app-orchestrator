@@ -934,6 +934,7 @@ async fn create_process_definition_handler(
         group: input.group,
         visible: input.visible,
         machine_id: input.machine_id,
+        launchd: input.launchd,
         created_at: now,
         updated_at: now,
     };

@@ -241,6 +241,21 @@ pub enum LogMode {
     Split,
 }
 
+/// Marks a process as supervised by launchd (locally on this host, or on the
+/// project's remote machine over SSH) rather than spawned directly by Karvon.
+/// When present, start/stop/restart delegate to `launchctl` and status is read
+/// back from launchd — see process_manager::reconcile_launchd_process. This
+/// keeps launchd's boot-survival + KeepAlive while Karvon stays the control panel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchdSupervision {
+    /// launchd job label, e.g. "uz.blaze.mediaguard-agent".
+    pub label: String,
+    /// launchd domain target, e.g. "gui/501". Defaults to "gui/501" when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessDefinition {
@@ -263,6 +278,8 @@ pub struct ProcessDefinition {
     pub visible: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine_id: Option<Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launchd: Option<LaunchdSupervision>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -659,6 +676,8 @@ pub struct ProcessFormInput {
     pub visible: bool,
     #[serde(default)]
     pub machine_id: Option<Id>,
+    #[serde(default)]
+    pub launchd: Option<LaunchdSupervision>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

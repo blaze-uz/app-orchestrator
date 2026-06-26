@@ -1,8 +1,8 @@
 use crate::{
     health,
     models::{
-        ApiError, ApiResponse, DashboardSummary, ExternalProcess, HealthStatus, Id, LogEntry,
-        LogHistoryFilters, LogLevel, Machine, MetricSample, PortBinding, ProcessDefinition,
+        ApiError, ApiResponse, DashboardSummary, ExternalProcess, HealthStatus, Id, LaunchdSupervision,
+        LogEntry, LogHistoryFilters, LogLevel, Machine, MetricSample, PortBinding, ProcessDefinition,
         ProcessRuntimeState, ProcessStatus, Project, ProjectDetail, ProjectStatus, RestartPolicy,
         RestartPolicyKind, RuntimeProcessRecord, StreamType,
     },
@@ -42,6 +42,342 @@ const RESTART_STABLE_RESET_MS: u64 = RESTART_BACKOFF_CAP_MS;
 
 pub fn log_history_since() -> chrono::DateTime<Utc> {
     Utc::now() - ChronoDuration::minutes(LOG_HISTORY_WINDOW_MINUTES)
+}
+
+// ===== launchd-delegated supervision =====
+//
+// A process may declare `launchd { label, domain }`. Then launchd — local on
+// this host, or on the project's remote machine over SSH — is the real
+// supervisor (boot-survival + KeepAlive). Karvon never spawns a child for it:
+// start/stop/restart shell out to `launchctl`, and status is read back from
+// `launchctl list`. This makes Karvon a truthful control panel without two
+// supervisors fighting over the same process. See reconcile_launchd_process and
+// start_launchd_monitor.
+
+const LAUNCHD_MONITOR_INTERVAL_SECS: u64 = 15;
+const LAUNCHD_DEFAULT_DOMAIN: &str = "gui/501";
+
+fn launchd_domain(sup: &LaunchdSupervision) -> String {
+    sup.domain
+        .as_deref()
+        .map(str::trim)
+        .filter(|domain| !domain.is_empty())
+        .unwrap_or(LAUNCHD_DEFAULT_DOMAIN)
+        .to_string()
+}
+
+fn launchd_target(sup: &LaunchdSupervision) -> String {
+    format!("{}/{}", launchd_domain(sup), sup.label)
+}
+
+/// launchd label/domain are interpolated into a remote shell command, so restrict
+/// them to a safe charset (reverse-DNS labels, `gui/<uid>` domains) to prevent
+/// shell injection. Returns false for anything outside that set.
+fn is_safe_launchd_token(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '/'))
+}
+
+fn launchd_tokens_safe(sup: &LaunchdSupervision) -> bool {
+    is_safe_launchd_token(&sup.label) && is_safe_launchd_token(&launchd_domain(sup))
+}
+
+#[derive(Debug)]
+enum LaunchdState {
+    Running(u32),
+    Stopped,
+    NotLoaded,
+    /// Transient lookup failure (e.g. SSH blip) — do not flip the process to
+    /// crashed/stopped on this; keep the last known status.
+    Unknown(String),
+}
+
+/// Run `launchctl <args>` locally (machine = None) or on a remote machine over
+/// SSH. Returns (success, stdout, stderr).
+async fn run_launchctl(
+    machine: Option<&Machine>,
+    args: &[&str],
+) -> Result<(bool, String, String), String> {
+    match machine {
+        None => {
+            let output = Command::new("launchctl")
+                .args(args)
+                .stdin(Stdio::null())
+                .output()
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok((
+                output.status.success(),
+                String::from_utf8_lossy(&output.stdout).to_string(),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ))
+        }
+        Some(machine) => {
+            let mut shell = String::from("launchctl");
+            for arg in args {
+                shell.push(' ');
+                shell.push_str(arg);
+            }
+            let output = ssh_executor::run_remote_command(machine, &shell)
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok((
+                output.status.success(),
+                String::from_utf8_lossy(&output.stdout).to_string(),
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ))
+        }
+    }
+}
+
+/// Parse the `"PID" = N;` line from `launchctl list <label>` output.
+fn parse_launchctl_pid(stdout: &str) -> Option<u32> {
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.starts_with("\"PID\"") {
+            return line
+                .split('=')
+                .nth(1)
+                .map(|value| value.trim().trim_end_matches(';').trim())
+                .and_then(|value| value.parse::<u32>().ok());
+        }
+    }
+    None
+}
+
+async fn launchd_query(machine: Option<&Machine>, sup: &LaunchdSupervision) -> LaunchdState {
+    match run_launchctl(machine, &["list", sup.label.as_str()]).await {
+        Ok((true, stdout, _)) => match parse_launchctl_pid(&stdout) {
+            Some(pid) => LaunchdState::Running(pid),
+            None => LaunchdState::Stopped,
+        },
+        // A loaded-but-absent label exits non-zero ("Could not find service").
+        Ok((false, _, _)) => LaunchdState::NotLoaded,
+        Err(err) => LaunchdState::Unknown(err),
+    }
+}
+
+/// Read true status from launchd and update the runtime state. Used by the
+/// periodic monitor and after every start/stop/restart so the dashboard mirrors
+/// reality instead of guessing.
+async fn reconcile_launchd_process(
+    app: &AppHandle,
+    state: &AppState,
+    process: &ProcessDefinition,
+    sup: &LaunchdSupervision,
+) -> ProcessRuntimeState {
+    let machine = resolve_remote_machine(state, process).await;
+    let observed = launchd_query(machine.as_ref(), sup).await;
+    let mut runtime = state
+        .runtime
+        .states
+        .read()
+        .await
+        .get(&process.id)
+        .cloned()
+        .unwrap_or_else(|| ProcessRuntimeState::stopped(process.id.clone()));
+
+    let event = match observed {
+        LaunchdState::Running(pid) => {
+            let already_running = matches!(runtime.current_status, ProcessStatus::Running)
+                && runtime.pid == Some(pid);
+            runtime.pid = Some(pid);
+            runtime.current_status = ProcessStatus::Running;
+            runtime.stopped_at = None;
+            runtime.exit_code = None;
+            runtime.last_error = None;
+            if runtime.started_at.is_none() {
+                runtime.started_at = Some(Utc::now());
+            }
+            if already_running {
+                return runtime;
+            }
+            "process_started"
+        }
+        LaunchdState::Stopped | LaunchdState::NotLoaded => {
+            if matches!(runtime.current_status, ProcessStatus::Stopped) && runtime.pid.is_none() {
+                return runtime;
+            }
+            runtime.pid = None;
+            runtime.current_status = ProcessStatus::Stopped;
+            runtime.memory_usage = None;
+            runtime.health_status = Some(HealthStatus::Unknown);
+            "process_stopped"
+        }
+        LaunchdState::Unknown(err) => {
+            // Transient lookup failure (e.g. SSH blip): leave status untouched.
+            append_log(
+                app,
+                state,
+                process,
+                StreamType::System,
+                LogLevel::Debug,
+                format!("launchd status lookup failed (keeping last status): {err}"),
+            )
+            .await;
+            return runtime;
+        }
+    };
+    set_runtime(app, state, runtime.clone(), event).await;
+    runtime
+}
+
+async fn start_launchd_process(
+    app: &AppHandle,
+    state: &AppState,
+    process: &ProcessDefinition,
+    sup: &LaunchdSupervision,
+) -> Result<ProcessRuntimeState, ApiError> {
+    if !launchd_tokens_safe(sup) {
+        return Err(ApiError::new(
+            "INVALID_LAUNCHD",
+            "Unsafe launchd label or domain",
+            false,
+        ));
+    }
+    let machine = resolve_remote_machine(state, process).await;
+    let target = launchd_target(sup);
+    // `enable` clears a prior `disable`; ignore its result (already-enabled is fine).
+    let _ = run_launchctl(machine.as_ref(), &["enable", target.as_str()]).await;
+    let (ok, _stdout, stderr) = run_launchctl(machine.as_ref(), &["kickstart", target.as_str()])
+        .await
+        .map_err(|err| {
+            ApiError::with_details("LAUNCHCTL_FAILED", "launchctl kickstart failed", err, true)
+        })?;
+    append_log(
+        app,
+        state,
+        process,
+        StreamType::System,
+        if ok { LogLevel::Info } else { LogLevel::Warn },
+        format!("launchctl kickstart {target}"),
+    )
+    .await;
+    if !ok && !stderr.trim().is_empty() {
+        append_log(
+            app,
+            state,
+            process,
+            StreamType::System,
+            LogLevel::Warn,
+            format!("launchctl stderr: {}", stderr.trim()),
+        )
+        .await;
+    }
+    sleep(Duration::from_millis(600)).await;
+    Ok(reconcile_launchd_process(app, state, process, sup).await)
+}
+
+async fn stop_launchd_process(
+    app: &AppHandle,
+    state: &AppState,
+    process: &ProcessDefinition,
+    sup: &LaunchdSupervision,
+) -> Result<ProcessRuntimeState, ApiError> {
+    if !launchd_tokens_safe(sup) {
+        return Err(ApiError::new(
+            "INVALID_LAUNCHD",
+            "Unsafe launchd label or domain",
+            false,
+        ));
+    }
+    let machine = resolve_remote_machine(state, process).await;
+    let target = launchd_target(sup);
+    let _ = run_launchctl(machine.as_ref(), &["kill", "SIGTERM", target.as_str()]).await;
+    append_log(
+        app,
+        state,
+        process,
+        StreamType::System,
+        LogLevel::Info,
+        format!("launchctl kill SIGTERM {target} (launchd KeepAlive may relaunch it)"),
+    )
+    .await;
+    sleep(Duration::from_millis(600)).await;
+    Ok(reconcile_launchd_process(app, state, process, sup).await)
+}
+
+async fn restart_launchd_process(
+    app: &AppHandle,
+    state: &AppState,
+    process: &ProcessDefinition,
+    sup: &LaunchdSupervision,
+) -> Result<ProcessRuntimeState, ApiError> {
+    if !launchd_tokens_safe(sup) {
+        return Err(ApiError::new(
+            "INVALID_LAUNCHD",
+            "Unsafe launchd label or domain",
+            false,
+        ));
+    }
+    let machine = resolve_remote_machine(state, process).await;
+    let target = launchd_target(sup);
+    let (ok, _stdout, stderr) =
+        run_launchctl(machine.as_ref(), &["kickstart", "-k", target.as_str()])
+            .await
+            .map_err(|err| {
+                ApiError::with_details(
+                    "LAUNCHCTL_FAILED",
+                    "launchctl kickstart -k failed",
+                    err,
+                    true,
+                )
+            })?;
+    append_log(
+        app,
+        state,
+        process,
+        StreamType::System,
+        if ok { LogLevel::Info } else { LogLevel::Warn },
+        format!("launchctl kickstart -k {target}"),
+    )
+    .await;
+    if !ok && !stderr.trim().is_empty() {
+        append_log(
+            app,
+            state,
+            process,
+            StreamType::System,
+            LogLevel::Warn,
+            format!("launchctl stderr: {}", stderr.trim()),
+        )
+        .await;
+    }
+    sleep(Duration::from_millis(800)).await;
+    Ok(reconcile_launchd_process(app, state, process, sup).await)
+}
+
+/// Periodically mirror launchd state into the runtime so the dashboard stays
+/// truthful for launchd-supervised processes (which Karvon does not spawn and so
+/// has no exit watcher for). Runs health checks for ones launchd reports running.
+pub fn start_launchd_monitor(app: AppHandle, state: AppState) {
+    tauri::async_runtime::spawn(async move {
+        sleep(Duration::from_secs(5)).await;
+        loop {
+            let processes: Vec<(ProcessDefinition, LaunchdSupervision)> = {
+                let config = state.config.read().await;
+                config
+                    .processes
+                    .iter()
+                    .filter_map(|process| {
+                        process
+                            .launchd
+                            .clone()
+                            .map(|sup| (process.clone(), sup))
+                    })
+                    .collect()
+            };
+            for (process, sup) in processes {
+                let runtime = reconcile_launchd_process(&app, &state, &process, &sup).await;
+                if matches!(runtime.current_status, ProcessStatus::Running) {
+                    run_process_health_check(app.clone(), state.clone(), process.id.clone()).await;
+                }
+            }
+            sleep(Duration::from_secs(LAUNCHD_MONITOR_INTERVAL_SECS)).await;
+        }
+    });
 }
 
 pub async fn get_project_detail(
@@ -123,6 +459,11 @@ async fn start_process_inner(
             .ok_or_else(|| ApiError::new("PROJECT_NOT_FOUND", "Project not found", false))?;
         (project, process, config.settings.clone())
     };
+
+    // launchd-supervised: delegate to launchctl instead of spawning a child.
+    if let Some(sup) = process.launchd.clone() {
+        return start_launchd_process(&app, &state, &process, &sup).await;
+    }
 
     let existing = state.runtime.states.read().await.get(&process_id).cloned();
     if matches!(
@@ -555,6 +896,12 @@ async fn stop_process_inner(
             .cloned()
             .ok_or_else(|| ApiError::new("PROCESS_NOT_FOUND", "Process not found", false))?
     };
+
+    // launchd-supervised: delegate to launchctl instead of signalling a child pgid.
+    if let Some(sup) = process.launchd.clone() {
+        return stop_launchd_process(&app, &state, &process, &sup).await;
+    }
+
     let stop_timeout_ms = state.config.read().await.settings.stop_timeout_ms;
     let mut runtime = state
         .runtime
@@ -774,6 +1121,11 @@ pub async fn recover_tracked_processes(app: AppHandle, state: AppState) {
         let Some(process) = processes_by_id.get(&process_id) else {
             continue;
         };
+        // launchd owns these — never resurrect a stale Karvon pid record (which
+        // may even be pid 1). The launchd monitor reconciles true status on boot.
+        if process.launchd.is_some() {
+            continue;
+        }
         let process_group_id = normalized_process_group_id(&record);
         let live_pid = live_pid_for_record(&record).await;
         match live_pid {
@@ -860,6 +1212,11 @@ pub async fn sync_external_processes(app: AppHandle, state: AppState) {
             .processes
             .iter()
             .filter_map(|process| {
+                // launchd-supervised processes are reconciled by start_launchd_monitor,
+                // not adopted as external here.
+                if process.launchd.is_some() {
+                    return None;
+                }
                 let project = config
                     .projects
                     .iter()
@@ -1477,6 +1834,32 @@ pub async fn restart_process(
     state: AppState,
     process_id: Id,
 ) -> ApiResponse<ProcessRuntimeState> {
+    // launchd-supervised: a restart is a single `launchctl kickstart -k`, which
+    // does the kill+relaunch atomically; never spawn a competing child.
+    let launchd_process = {
+        let config = state.config.read().await;
+        config
+            .processes
+            .iter()
+            .find(|process| process.id == process_id)
+            .filter(|process| process.launchd.is_some())
+            .cloned()
+    };
+    if let Some(process) = launchd_process {
+        let sup = process.launchd.clone().expect("launchd present");
+        {
+            let mut states = state.runtime.states.write().await;
+            let runtime = states
+                .entry(process_id.clone())
+                .or_insert_with(|| ProcessRuntimeState::stopped(process_id.clone()));
+            runtime.restart_count += 1;
+        }
+        return match restart_launchd_process(&app, &state, &process, &sup).await {
+            Ok(runtime) => ApiResponse::ok(runtime),
+            Err(error) => ApiResponse::err(error),
+        };
+    }
+
     let existing = state.runtime.states.read().await.get(&process_id).cloned();
     if matches!(
         existing.map(|state| state.current_status),
@@ -3294,6 +3677,45 @@ mod tests {
 
     fn tokens(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    fn launchd(label: &str, domain: Option<&str>) -> LaunchdSupervision {
+        LaunchdSupervision {
+            label: label.to_string(),
+            domain: domain.map(|d| d.to_string()),
+        }
+    }
+
+    #[test]
+    fn launchd_target_defaults_domain() {
+        assert_eq!(
+            launchd_target(&launchd("uz.blaze.mediaguard-agent", None)),
+            "gui/501/uz.blaze.mediaguard-agent"
+        );
+        assert_eq!(
+            launchd_target(&launchd("foo.bar", Some("gui/502"))),
+            "gui/502/foo.bar"
+        );
+    }
+
+    #[test]
+    fn launchd_tokens_safe_rejects_injection() {
+        assert!(launchd_tokens_safe(&launchd("uz.blaze.mediaguard-telegram-collector", None)));
+        assert!(!launchd_tokens_safe(&launchd("foo; rm -rf /", None)));
+        assert!(!launchd_tokens_safe(&launchd("foo$(whoami)", None)));
+        assert!(!launchd_tokens_safe(&launchd("ok.label", Some("gui/501; echo"))));
+    }
+
+    #[test]
+    fn parse_launchctl_pid_extracts_pid() {
+        let out = "{\n\t\"LimitLoadToSessionType\" = \"Aqua\";\n\t\"LastExitStatus\" = 15;\n\t\"PID\" = 34468;\n\t\"Label\" = \"uz.blaze.mediaguard-agent\";\n};";
+        assert_eq!(parse_launchctl_pid(out), Some(34468));
+    }
+
+    #[test]
+    fn parse_launchctl_pid_absent_when_not_running() {
+        let out = "{\n\t\"LastExitStatus\" = 0;\n\t\"Label\" = \"foo\";\n};";
+        assert_eq!(parse_launchctl_pid(out), None);
     }
 
     #[test]

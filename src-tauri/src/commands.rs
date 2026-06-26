@@ -441,6 +441,7 @@ pub async fn create_process_definition(
         group: input.group,
         visible: input.visible,
         machine_id: input.machine_id,
+        launchd: input.launchd,
         created_at: now,
         updated_at: now,
     };
@@ -488,6 +489,7 @@ pub async fn update_process_definition(
         group: process.group.clone(),
         visible: process.visible,
         machine_id: process.machine_id.clone(),
+        launchd: process.launchd.clone(),
     };
     let validation = validate_process_definition(&state, Some(&process.id), &input).await;
     if !validation.valid {
