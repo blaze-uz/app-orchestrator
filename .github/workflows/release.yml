@@ -46,7 +46,7 @@ jobs:
         run: npm ci
 
       - name: Build and upload Tauri bundles
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -93,7 +93,7 @@ jobs:
       # the macOS job. NSIS-only keeps the updater target unambiguous — building
       # MSI too would put two installers behind one windows-x86_64 updater entry.
       - name: Build and upload Tauri bundles
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
